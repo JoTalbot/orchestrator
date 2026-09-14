@@ -194,6 +194,41 @@ class JoDriver:
         await asyncio.sleep(12)
         await self.ui._dismiss_popups()
 
+    # -------------------------------------------------- контекст из старых чатов
+
+    def _project_context(self) -> str | None:
+        """Дайджест истории проекта + пункты бэклога (P1)."""
+        parts = []
+        base = ROOT / "agent_profile"
+        for cand in (self.args.project, self.args.repo_name):
+            p = base / "knowledge" / f"{cand}.md"
+            if p.exists():
+                try:
+                    text = p.read_text(encoding="utf-8")
+                    text = re.sub(r"^#.*\n", "", text)  # убрать заголовок
+                    text = re.sub(r"\n---\n.*$", "", text, flags=re.S)
+                    parts.append(text.strip())
+                    break
+                except Exception:
+                    pass
+        bl = base / "BACKLOG.md"
+        if bl.exists():
+            try:
+                text = bl.read_text(encoding="utf-8")
+                # пункты этого проекта
+                m = re.search(rf"## {re.escape(self.args.project)}(.*?)(?=\n## |\Z)",
+                              text, re.S)
+                if m and m.group(1).strip():
+                    parts.append("Бэклог (незавершённое из чатов):\n"
+                                 + m.group(1).strip())
+            except Exception:
+                pass
+        if not parts:
+            return None
+        ctx = "\n\n".join(parts)[:2800]
+        return ("Контекст из предыдущих чатов этого проекта (не повторяй "
+                "пройденное):\n\n" + ctx)
+
     async def run_cycle(self) -> None:
         st = repo_state(self.args.repo_path)
         ctx = {
@@ -264,6 +299,22 @@ class JoDriver:
             self._after_reply(reply, msg)
             return
 
+        # ---- разовый контекст из старых чатов (P1)
+        if not self.state.get("context_sent"):
+            ctx_msg = self._project_context()
+            if ctx_msg:
+                log(f"→ [CONTEXT] {ctx_msg[:110]}...")
+                reply = await self.ui.send(ctx_msg, self.args.reply_timeout)
+                self.state.set("context_sent", True)
+                if reply:
+                    self.cycles += 1
+                    self.state.set("cycles", self.cycles)
+                    self.state.set("last_reply_tail",
+                                   reply[-800:].replace("\n", " "))
+                else:
+                    self.state.set("context_sent", False)  # повторим
+                return
+            self.state.set("context_sent", True)
         # ---- что происходит в чате
         if not last_reply:
             try:

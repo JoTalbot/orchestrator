@@ -108,9 +108,16 @@ def make_session(token: str):
 
 
 def api_get(session, url: str, params: dict | None = None,
-            retries: int = 8, quiet: bool = False):
-    """GET с ретраями: сетевые ошибки, 429 (Retry-After), 5xx, 403."""
+            retries: int = 8, quiet: bool = False,
+            cooldown: int = 0):
+    """GET с ретраями: сетевые ошибки, 429 (Retry-After), 5xx, 403.
+
+    При серии из COOLDOWN_STREAK подряд 429 делается длинная пауза cooldown
+    секунд — чтобы скользящее окно лимита успело освободиться.
+    """
+    COOLDOWN_STREAK = 3
     last_err = None
+    streak_429 = 0
     for attempt in range(retries):
         try:
             r = session.get(url, params=params, timeout=60)
@@ -126,10 +133,17 @@ def api_get(session, url: str, params: dict | None = None,
             raise AuthError("Токен недействителен или истёк (HTTP 401). "
                             "Обновите access token.")
         if r.status_code == 429:
+            streak_429 += 1
             try:
                 retry_after = int(r.headers.get("Retry-After", 0) or 0)
             except (TypeError, ValueError):
                 retry_after = 0
+            if streak_429 >= COOLDOWN_STREAK and cooldown > 0:
+                log(f"Серия {streak_429} отказов 429 подряд. "
+                    f"Долгая пауза {cooldown // 60} мин (остывание лимита)...")
+                time.sleep(cooldown)
+                streak_429 = 0
+                continue
             wait = max(retry_after, min(120, 5 * (2 ** attempt))) + random.uniform(0, 2)
             if not quiet:
                 log(f"Rate limit (429). Ждём ~{wait:.0f}с ({attempt + 1}/{retries})")
@@ -155,7 +169,8 @@ def api_get(session, url: str, params: dict | None = None,
     raise ApiError(f"Не удалось получить {url} за {retries} попыток: {last_err}")
 
 
-def list_conversations(session, include_archived: bool = False) -> list[dict]:
+def list_conversations(session, include_archived: bool = False,
+                       cooldown: int = 0) -> list[dict]:
     """Возвращает метаданные всех чатов (id, title, create/update_time)."""
     items: list[dict] = []
     offset = 0
@@ -164,7 +179,8 @@ def list_conversations(session, include_archived: bool = False) -> list[dict]:
         params["archived"] = "true"
     while True:
         params["offset"] = offset
-        data = api_get(session, f"{API_BASE}/conversations", params=params)
+        data = api_get(session, f"{API_BASE}/conversations", params=params,
+                       cooldown=cooldown)
         batch = data.get("items", [])
         items.extend(batch)
         total = data.get("total")
@@ -185,8 +201,8 @@ def list_conversations(session, include_archived: bool = False) -> list[dict]:
     return items
 
 
-def fetch_conversation(session, cid: str) -> dict:
-    return api_get(session, f"{API_BASE}/conversation/{cid}")
+def fetch_conversation(session, cid: str, cooldown: int = 0) -> dict:
+    return api_get(session, f"{API_BASE}/conversation/{cid}", cooldown=cooldown)
 
 
 def extract_light(conv: dict) -> list[dict]:
@@ -250,6 +266,8 @@ def main() -> None:
                     help="Попробовать включить архивные чаты в список")
     ap.add_argument("--sleep", type=float, default=0.5,
                     help="Базовая пауза между запросами, сек (default 0.5)")
+    ap.add_argument("--cooldown", type=int, default=420,
+                    help="Долгая пауза при серии 429, сек (default 420=7 мин, 0=выкл)")
     args = ap.parse_args()
 
     token = get_token(args)
@@ -279,7 +297,8 @@ def main() -> None:
         except json.JSONDecodeError:
             log("ВНИМАНИЕ: index.json повреждён, начинаем индекс заново")
 
-    metas = list_conversations(session, include_archived=args.include_archived)
+    metas = list_conversations(session, include_archived=args.include_archived,
+                               cooldown=args.cooldown)
     log(f"Всего чатов в списке: {len(metas)}")
 
     if args.only_meta:
@@ -306,7 +325,7 @@ def main() -> None:
                 skipped += 1
                 continue
             try:
-                conv = fetch_conversation(session, cid)
+                conv = fetch_conversation(session, cid, cooldown=args.cooldown)
                 save_json_atomic(raw_path, conv)
                 light = extract_light(conv)
                 save_json_atomic(light_dir / f"{cid}.json", light)

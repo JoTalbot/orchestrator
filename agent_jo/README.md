@@ -24,8 +24,10 @@ proof-of-work + Cloudflare turnstile (для дата-центровых IP), к
 ## Цикл драйвера
 
 1. Читает состояние проекта (git log, ROADMAP-задачи без «Implemented», STATUS).
-2. Если чата нет — открывает страницу папки проекта и стартует новый чат
-   сообщением INIT в стиле Jo (проект, ссылка, GitHub-токен, инструкции).
+2. Если чата нет — **находит существующую папку проекта** (реестр
+   `projects_registry.json` → сайдбар ChatGPT; новые папки НИКОГДА не
+   создаются) и стартует в ней новый чат сообщением INIT в стиле Jo
+   (проект, ссылка, GitHub-токен, инструкции).
 3. Если чат есть — переходит в него и анализирует последний ответ ассистента:
    - вопрос/просьба решения → «Да. Делай всё сам.»
    - упоминание ошибок → «Продолжи. Ошибки чини сам.»
@@ -40,16 +42,19 @@ proof-of-work + Cloudflare turnstile (для дата-центровых IP), к
 
 ```bash
 cd /opt/orchestrator
-# разовый тестовый цикл
+# разовый тестовый цикл (папка найдётся сама по имени проекта)
 .venv/bin/python agent_jo/jo_driver.py \
   --project ukraine \
-  --project-url https://chatgpt.com/g/g-p-XXXX-ukraine \
   --repo-path /opt/orchestrator/projects/ukraine --once
 
 # постоянно: systemd-юнит (пример — agent_jo/jo-agent-ukraine.service)
 sudo systemctl enable --now jo-agent-ukraine.service
 journalctl -u jo-agent-ukraine -f
 ```
+
+`--project-url` можно не указывать: драйвер ищет существующую папку по
+имени проекта сначала в `projects_registry.json`, затем в сайдбаре ChatGPT.
+Реестр обновляется автоматически. Папки не создаются.
 
 ## Требования
 

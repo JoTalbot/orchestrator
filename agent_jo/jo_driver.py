@@ -137,6 +137,56 @@ class JoDriver:
         m = re.search(r"/c/([0-9a-fA-F-]{36})", url or "")
         return m.group(1) if m else None
 
+    # -------------------------------------------------- реестр папок проектов
+
+    def _registry(self) -> dict:
+        p = ROOT / "agent_jo" / "projects_registry.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _registry_lookup(self, name: str) -> str | None:
+        """URL существующей папки проекта по имени (самая старая = оригинал)."""
+        items = []
+        for k, v in self._registry().items():
+            if k.lower() == name.lower():
+                items.extend(v if isinstance(v, list) else [{"url": v}])
+        if not items:
+            return None
+        items.sort(key=lambda x: x.get("created_at") or "9999")
+        return items[0].get("url")
+
+    def _registry_save(self, name: str, url: str) -> None:
+        p = ROOT / "agent_jo" / "projects_registry.json"
+        reg = self._registry()
+        items = reg.get(name, [])
+        if not any(i.get("url") == url for i in items):
+            items.append({"url": url})
+        reg[name] = items
+        try:
+            p.write_text(json.dumps(reg, ensure_ascii=False, indent=1),
+                         encoding="utf-8")
+        except Exception:
+            pass
+
+    async def resolve_project_url(self) -> str | None:
+        """URL папки проекта: аргумент → реестр → сайдбар. НИКОГДА не создаём папки."""
+        if self.args.project_url:
+            return self.args.project_url
+        url = self._registry_lookup(self.args.project)
+        if url:
+            log(f"папка найдена в реестре: {url}")
+            return url
+        log(f"папки {self.args.project!r} нет в реестре, ищу в сайдбаре…")
+        url = await self.ui.open_project_by_sidebar(self.args.project)
+        if url:
+            self._registry_save(self.args.project, url)
+            log(f"папка найдена в сайдбаре: {url}")
+        return url
+
     async def open_project_fresh_chat(self):
         """Открывает страницу проекта (новый чат в папке проекта)."""
         log(f"открываю папку проекта: {self.args.project_url}")
@@ -157,7 +207,12 @@ class JoDriver:
         last_reply = self.state.get("last_reply_tail")
 
         if not conv_id:
-            # ---- старт нового чата в папке проекта
+            # ---- старт нового чата в СУЩЕСТВУЮЩЕЙ папке проекта
+            project_url = await self.resolve_project_url()
+            if not project_url:
+                log(f"папка проекта {self.args.project!r} не найдена — цикл пропущен")
+                return
+            self.args.project_url = project_url
             await self.open_project_fresh_chat()
             user = await self.ui.session_user()
             log(f"сессия ChatGPT: {user}")
@@ -243,8 +298,8 @@ class JoDriver:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Jo-драйвер проекта в ChatGPT")
     ap.add_argument("--project", required=True, help="ключ проекта (имя папки)")
-    ap.add_argument("--project-url", required=True,
-                    help="URL папки проекта в ChatGPT (https://chatgpt.com/g/g-p-...)")
+    ap.add_argument("--project-url", default="",
+                    help="URL папки проекта (если пусто — ищем по имени в реестре/сайдбаре, НЕ создаём)")
     ap.add_argument("--repo-name", default="")
     ap.add_argument("--repo-url", default="")
     ap.add_argument("--repo-path", default="")

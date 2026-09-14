@@ -17,4 +17,6 @@ agent_profile/samples_user_messages.md
 
 # Состояние драйверов (содержит id чатов, локально)
 agent_jo/state_*.json
-projects/
+
+# Реестр папок проектов ChatGPT (личное, локально)
+agent_jo/projects_registry.json

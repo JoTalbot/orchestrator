@@ -59,6 +59,35 @@ class ChatGPTUI:
     async def current_url(self) -> str:
         return await self.tab.evaluate("location.href")
 
+    async def open_project_by_sidebar(self, project_name: str) -> str | None:
+        """Фолбэк: найти папку проекта в сайдбаре и открыть её."""
+        await self.tab.navigate("https://chatgpt.com/", timeout=90)
+        await asyncio.sleep(7)
+        for _ in range(3):
+            clicked = await self.tab.evaluate(
+                "() => { const btns = Array.from(document.querySelectorAll('button'));"
+                " const b = btns.find(x => (x.innerText||'').trim().toLowerCase() === 'show more');"
+                " if (b) { b.click(); return true; } return false; }")
+            if not clicked:
+                break
+            await asyncio.sleep(1.2)
+        # клик по строке проекта (раскрывает/открывает)
+        ok = await self.tab.evaluate(
+            f"() => {{ const rows = Array.from(document.querySelectorAll('div[role=\"button\"]'));"
+            f" const r = rows.find(x => (x.innerText||'').trim().toLowerCase() === '{project_name.lower()}');"
+            f" if (r) {{ r.click(); return true; }} return false; }}")
+        if ok:
+            await asyncio.sleep(3)
+        href = await self.tab.evaluate(
+            "(() => { const a = Array.from(document.querySelectorAll('a[href*=\"/g/g-p-\"]'))"
+            " .find(x => (x.innerText||'').trim() !== ''); return a ? a.getAttribute('href') : null; })()")
+        if href:
+            full = href if href.startswith("http") else "https://chatgpt.com" + href.split("?")[0]
+            await self.tab.navigate(full, timeout=120)
+            await asyncio.sleep(8)
+            return await self.current_url()
+        return None
+
     # ---------------------------------------------------------- отправка
 
     async def _dismiss_popups(self):

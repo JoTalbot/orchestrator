@@ -1,0 +1,14 @@
+[Unit]
+Description=Jo ChatGPT driver (ukraine): автономная работа над проектом в ChatGPT
+After=network.target docker.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/orchestrator
+ExecStart=/opt/orchestrator/.venv/bin/python -u agent_jo/jo_driver.py --project ukraine --project-url https://chatgpt.com/g/g-p-6aa786d85ca481919d2c6376e9a64dde-ukraine --repo-path /opt/orchestrator/projects/ukraine --cycle-delay 180
+Restart=always
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

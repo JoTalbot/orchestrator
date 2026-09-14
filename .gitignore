@@ -11,3 +11,6 @@ __pycache__/
 data/
 logs/
 *.log
+
+# Выборка личных сообщений — только на сервере
+agent_profile/samples_user_messages.md

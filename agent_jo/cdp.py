@@ -133,12 +133,17 @@ class CDPBrowser:
 
     def new_tab(self, url: str = "about:blank") -> CDPTab:
         import urllib.parse
+        import time
         target = f"{self.base}/json/new?{urllib.parse.quote(url, safe='')}"
-        try:
-            d = sync_http_json(target, method="PUT")
-        except Exception:
-            d = sync_http_json(target, method="GET")
-        return CDPTab(d["webSocketDebuggerUrl"])
+        last_err = None
+        for _ in range(3):
+            try:
+                d = sync_http_json(target, method="PUT")
+                return CDPTab(d["webSocketDebuggerUrl"])
+            except Exception as e:
+                last_err = e
+                time.sleep(2)
+        raise RuntimeError(f"не удалось создать вкладку: {last_err}")
 
     def version(self) -> dict:
         return sync_http_json(f"{self.base}/json/version")

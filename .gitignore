@@ -20,3 +20,6 @@ agent_jo/state_*.json
 
 # Реестр папок проектов ChatGPT (личное, локально)
 agent_jo/projects_registry.json
+
+# Локальные клоны проектов (работаем внутри их собственных репозиториев)
+projects/

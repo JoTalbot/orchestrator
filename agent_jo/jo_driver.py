@@ -134,7 +134,7 @@ class JoDriver:
 
     @staticmethod
     def _conv_from_url(url: str) -> str | None:
-        m = re.search(r"/c/([0-9a-fA-F-]{36})", url or "")
+        m = re.search(r"/c/([0-9a-fA-F-]{32,40})", url or "")
         return m.group(1) if m else None
 
     # -------------------------------------------------- реестр папок проектов
@@ -224,12 +224,34 @@ class JoDriver:
 
         await self.ui.ensure_alive()
         # ---- продолжить ИМЕННО в существующем чате
+        # Канонический URL чата: .../g/{project_gizmo}/c/{conv_id} — короткий
+        # /c/{conv_id} SPA иногда откатывает на главную, канонический нет.
+        project_url = await self.resolve_project_url() or ""
         url = await self.ui.current_url()
         if self._conv_from_url(url) != conv_id:
-            log(f"перехожу в чат {conv_id[:8]}…")
-            await self.ui.tab.navigate(f"https://chatgpt.com/c/{conv_id}", timeout=120)
-            await asyncio.sleep(10)
+            # сначала пробуем присоединиться к уже открытой вкладке чата
+            attached = await self.ui.attach_to_conversation(conv_id)
+            if attached:
+                self.ui.cdp.close_tabs(fragment="https://chatgpt.com/",
+                                       exact=True)
+                await asyncio.sleep(3)
+            else:
+                log(f"открываю чат {conv_id[:8]}…")
+                marker = (self.state.get("last_sent") or "").strip()[:60]
+                ok = await self.ui.open_chat(conv_id, project_url,
+                                             marker=marker)
+                if not ok:
+                    log("чат открыть не удалось — цикл пропущен")
+                    return
+                await asyncio.sleep(5)
             await self.ui._dismiss_popups()
+            # сверяем фактический id чата из URL (мог отличаться по длине)
+            real_id = self.ui.conversation_id or self._conv_from_url(
+                await self.ui.current_url())
+            if real_id and real_id != conv_id:
+                log(f"id чата уточнён: {conv_id[:8]}… -> {real_id[:8]}…")
+                self.state.set("conversation_id", real_id)
+                conv_id = real_id
         # ---- проверка размера контекста
         n_msgs = await self.ui.message_count()
         log(f"чат {conv_id[:8]}…, сообщений на экране: {n_msgs}")
@@ -279,7 +301,20 @@ class JoDriver:
                 self.stuck_streak = 0
 
     async def run(self) -> None:
-        await self.ui.start()
+        # старт вкладки с ретраями (CDP может тормозить при высокой нагрузке)
+        started = False
+        for attempt in range(10):
+            try:
+                await self.ui.start()
+                started = True
+                break
+            except Exception as e:
+                log(f"старт вкладки не удался ({type(e).__name__}: {e}), "
+                    f"повтор через 30с ({attempt + 1}/10)")
+                await asyncio.sleep(30)
+        if not started:
+            log("не смог стартовать вкладку за 10 попыток — выхожу")
+            return
         log(f"сессия ChatGPT: {await self.ui.session_user()}")
         if self.args.once:
             await self.run_cycle()

@@ -16,7 +16,7 @@ async def http_json(url: str, method: str = "GET", timeout: float = 10):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
-def sync_http_json(url: str, method: str = "GET", timeout: float = 10):
+def sync_http_json(url: str, method: str = "GET", timeout: float = 30):
     req = urllib.request.Request(url, method=method)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
@@ -35,7 +35,8 @@ class CDPTab:
 
     async def connect(self):
         self.ws = await websockets.connect(
-            self.ws_url, max_size=64 * 1024 * 1024, ping_interval=30)
+            self.ws_url, max_size=64 * 1024 * 1024, ping_interval=30,
+            open_timeout=30, close_timeout=10)
         self._listener = asyncio.create_task(self._listen())
         return self
 
@@ -136,14 +137,42 @@ class CDPBrowser:
         import time
         target = f"{self.base}/json/new?{urllib.parse.quote(url, safe='')}"
         last_err = None
-        for _ in range(3):
+        for attempt in range(5):
             try:
-                d = sync_http_json(target, method="PUT")
+                d = sync_http_json(target, method="PUT", timeout=30)
                 return CDPTab(d["webSocketDebuggerUrl"])
             except Exception as e:
                 last_err = e
-                time.sleep(2)
+                time.sleep(5)
         raise RuntimeError(f"не удалось создать вкладку: {last_err}")
 
     def version(self) -> dict:
         return sync_http_json(f"{self.base}/json/version")
+
+    def close_tabs(self, fragment: str | None = None,
+                   keep: str | None = None, exact: bool = False) -> int:
+        """Закрыть вкладки по фрагменту URL (keep — не трогать).
+
+        exact=True — точное совпадение URL (без учёта конечного слеша).
+        """
+        import urllib.request
+        closed = 0
+        for t in self.tabs():
+            if t.get("type") != "page":
+                continue
+            url = t.get("url", "")
+            if keep and keep in url:
+                continue
+            if fragment is None:
+                continue
+            match = (url.rstrip("/") == fragment.rstrip("/") if exact
+                     else fragment in url)
+            if not match:
+                continue
+            try:
+                urllib.request.urlopen(f"{self.base}/json/close/{t['id']}",
+                                       timeout=20)
+                closed += 1
+            except Exception:
+                pass
+        return closed

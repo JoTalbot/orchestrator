@@ -1,0 +1,14 @@
+[Unit]
+Description=Jo ChatGPT driver (fs): автономная работа над проектом в ChatGPT
+After=network.target docker.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/orchestrator
+ExecStart=/opt/orchestrator/.venv/bin/python -u agent_jo/jo_driver.py --project fs --repo-path /opt/orchestrator/projects/fs --cycle-delay 180
+Restart=always
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

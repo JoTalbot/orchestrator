@@ -281,31 +281,65 @@ class ChatGPTUI:
             self.log(f"ввод не зафиксирован (len={got}), повторяю")
             await self.tab.cmd("Input.insertText", {"text": text})
             await asyncio.sleep(0.8)
-        for _ in range(2):
-            await self.tab.cmd("Input.dispatchKeyEvent",
-                               {"type": "keyDown", "key": "Enter", "code": "Enter",
-                                "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
-            await self.tab.cmd("Input.dispatchKeyEvent",
-                               {"type": "keyUp", "key": "Enter", "code": "Enter",
-                                "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
-            await asyncio.sleep(0.3)
+        # отправка: клик по кнопке Send реальными mouse-событиями
+        # (Enter после перезапуска браузера перестал отправлять — клик надёжнее)
+        btn = None
+        for _ in range(10):
+            btn = await self.tab.evaluate(
+                "() => { const b = document.querySelector("
+                "'button[data-testid=\"send-button\"]');"
+                " if (!b || b.disabled) return null;"
+                " const r = b.getBoundingClientRect();"
+                " return {x: Math.round(r.x + r.width/2),"
+                "         y: Math.round(r.y + r.height/2)}; }")
+            if btn:
+                break
+            await asyncio.sleep(2)
+        if btn:
+            for ev in ("mouseMoved", "mousePressed", "mouseReleased"):
+                try:
+                    await self.tab.cmd("Input.dispatchMouseEvent", {
+                        "type": ev, "x": btn["x"], "y": btn["y"],
+                        "button": "left", "clickCount": 1})
+                except Exception:
+                    pass
+        else:
+            self.log("кнопка Send не найдена, пробую Enter")
+            for _ in range(2):
+                await self.tab.cmd("Input.dispatchKeyEvent",
+                                   {"type": "keyDown", "key": "Enter", "code": "Enter",
+                                    "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
+                await self.tab.cmd("Input.dispatchKeyEvent",
+                                   {"type": "keyUp", "key": "Enter", "code": "Enter",
+                                    "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
+                await asyncio.sleep(0.3)
 
     async def send(self, text: str, reply_timeout: float = 1200) -> str | None:
         """Отправляет сообщение и ждёт завершения хода ассистента."""
         await self._dismiss_popups()
+        # счётчик user-сообщений ДО отправки (для проверки, что ушло)
+        try:
+            before = await self.tab.evaluate(
+                "() => document.querySelectorAll("
+                "'[data-message-author-role=\"user\"]').length")
+        except Exception:
+            before = None
         sent = False
         for attempt in range(3):
             await self._type_and_send(text)
-            # проверяем, что сообщение реально ушло (URL стал /c/... или
-            # появилось user-сообщение с нашим текстом)
-            for _ in range(12):
+            # подтверждение: user-сообщений стало больше или пошла генерация
+            for _ in range(10):
                 await asyncio.sleep(4)
                 try:
-                    if self._conv_id_from_url(await self.current_url()):
+                    gen = await self.tab.evaluate(
+                        "() => !!document.querySelector('[data-testid=\"stop-button\"]')")
+                    if gen:
                         sent = True
                         break
-                    users = await self.user_messages()
-                    if users and text[:40] in (users[-1] or ""):
+                    n = await self.tab.evaluate(
+                        "() => document.querySelectorAll("
+                        "'[data-message-author-role=\"user\"]').length")
+                    if before is not None and n > before:
                         sent = True
                         break
                 except Exception:
@@ -313,17 +347,11 @@ class ChatGPTUI:
             if sent:
                 break
             self.log("сообщение не ушло, повторяю ввод")
-            # фолбэк: кликнуть кнопку отправки (если Enter не сработал)
-            try:
-                await self.tab.evaluate(
-                    "() => { const b = document.querySelector("
-                    "'button[data-testid=\"send-button\"], "
-                    "button[aria-label*=\"Send\"], button[aria-label*=\"Отправить\"]');"
-                    " if (b) { b.click(); return true; } return false; }")
-            except Exception:
-                pass
             await self._dismiss_popups()
             await asyncio.sleep(8)
+        if not sent:
+            self.log("сообщение не удалось отправить за 3 попытки")
+            return None
         self.conversation_id = self._conv_id_from_url(await self.current_url())
         reply = await self.wait_reply(reply_timeout)
         # после ответа URL гарантированно содержит id чата
@@ -355,6 +383,9 @@ class ChatGPTUI:
     async def wait_reply(self, timeout: float = 1200) -> str | None:
         """Ждёт, пока генерация закончится и текст стабилизируется."""
         start = time.time()
+        # начальная пауза: дать SPA отправить запрос и начать генерацию,
+        # иначе можно схватить старый стабилизировавшийся ответ
+        await asyncio.sleep(12)
         last_sig = None
         stable = 0
         while time.time() - start < timeout:

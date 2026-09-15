@@ -195,9 +195,24 @@ class JoDriver:
         return url
 
     async def open_project_fresh_chat(self):
-        """Открывает страницу проекта (новый чат в папке проекта)."""
-        log(f"открываю папку проекта: {self.args.project_url}")
-        await self.ui.navigate_to(self.args.project_url, timeout=120)
+        """Открывает НОВЫЙ чат в папке проекта.
+
+        Свежая загрузка /g/<gizmo> в НОВОЙ вкладке создаёт новый чат в
+        проекте. Переход по URL внутри живой вкладки не работает:
+        navigate_to() считает «проект» и «проект/чат» одним URL
+        (_same_url) и не навигирует — вкладка остаётся на последнем чате.
+        """
+        log(f"открываю НОВЫЙ чат в папке проекта: {self.args.project_url}")
+        self.ui.conversation_id = None  # не редиректить на старый чат
+        if self.ui.tab_id:
+            try:
+                self.ui.close_own_tab()
+            except Exception as e:
+                log(f"старую вкладку закрыть не удалось ({e}) — "
+                    f"открываю новую")
+        if not await self.ui.ensure_alive(url=self.args.project_url,
+                                          force_new=True):
+            raise RuntimeError("не удалось открыть вкладку для нового чата")
         await asyncio.sleep(12)
         await self.ui._dismiss_popups()
 
@@ -277,6 +292,8 @@ class JoDriver:
             log(f"→ новый чат: {msg[:120]}...")
             reply = await self.ui.send(msg, self.args.reply_timeout)
             self._after_reply(reply, msg)
+            new_id = self.state.get("conversation_id")
+            log(f"ид нового чата: {str(new_id)[:13] if new_id else 'НЕ ОПРЕДЕЛЁН'}…")
             return
 
         if not await self.ui.ensure_alive(tab_id=self.state.get("tab_id")):

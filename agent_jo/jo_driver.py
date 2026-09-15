@@ -7,8 +7,9 @@ Jo-драйвер: автономно ведёт проект в ChatGPT от и
   1. Читает состояние проекта (git, ROADMAP, статус).
   2. Если чата нет — открывает папку проекта в ChatGPT и стартует новый чат
      сообщением в стиле Jo.
-  3. Если чат есть — анализирует последний ответ ассистента и пишет следующее
-     сообщение в стиле Jo (продолжи / да, делай всё сам / статус / исправь).
+  3. Если чат есть — по ходу работы всегда пишет только «+».
+     Если в конце ответа ассистента появилось «КОНЕЦ» — работа над
+     проектом останавливается (state: finished, heartbeat 1ч).
   4. Если контекст чата разросся — пересоздаёт чат в той же папке проекта
      с handoff-сообщением (текущее состояние + задачи).
   5. Пишет лог каждого шага. Всё на русском.
@@ -17,6 +18,9 @@ Jo-драйвер: автономно ведёт проект в ChatGPT от и
   python agent_jo/jo_driver.py --project ukraine \
       --project-url https://chatgpt.com/g/g-p-XXXX-ukraine \
       --repo-path /opt/orchestrator/projects/ukraine [--once]
+
+Перезапуск работы (новый чат с инструкциями):
+  python agent_jo/jo_driver.py --project ukraine --restart-project
 """
 
 import argparse
@@ -233,6 +237,10 @@ class JoDriver:
                 "пройденное):\n\n" + ctx)
 
     async def run_cycle(self) -> None:
+        if self.state.get("finished"):
+            log(f"проект остановлен («КОНЕЦ») — цикл пропущен, "
+                f"ожидание перезапуска (--restart-project)")
+            return
         # 0) папка проекта и ЖИВОЙ браузер — гарантия на входе в любой цикл
         if not self.args.project_url:
             url = await self.resolve_project_url()
@@ -336,6 +344,9 @@ class JoDriver:
                 last_reply = msgs[-1] if msgs else None
             except Exception:
                 last_reply = None
+        if jo_style.is_konec(last_reply):
+            self._mark_finished("«КОНЕЦ» в конце последнего сообщения")
+            return
         kind = jo_style.decide(last_reply)
         if kind == "OVERFLOW":
             await self.open_project_fresh_chat()
@@ -346,11 +357,23 @@ class JoDriver:
         reply = await self.ui.send(msg, self.args.reply_timeout)
         self._after_reply(reply, msg)
 
+    def _mark_finished(self, reason: str) -> None:
+        """Остановить работу над проектом: «КОНЕЦ» в конце сообщения."""
+        if self.state.get("finished"):
+            return
+        self.state.set("finished", True)
+        self.state.set("finished_at",
+                       datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        self.state.set("finished_reason", reason)
+        log(f"работа над проектом {self.args.project!r} остановлена: {reason}")
+
     def _after_reply(self, reply: str | None, sent: str) -> None:
         self.cycles += 1
         self.state.set("cycles", self.cycles)
         self.state.set("conversation_id", self.ui.conversation_id)
         self.state.set("last_sent", sent[:400])
+        if reply and jo_style.is_konec(reply):
+            self._mark_finished("«КОНЕЦ» в конце ответа ассистента")
         if reply:
             tail = reply[-800:].replace("\n", " ")
             self.state.set("last_reply_tail", tail)
@@ -402,8 +425,14 @@ class JoDriver:
                     log(f"{self.errors_streak} ошибок подряд — выхожу, "
                         f"systemd поднимет службу заново")
                     sys.exit(1)
-            delay = self.args.cycle_delay
-            log(f"следующий цикл через {delay}с (всего циклов: {self.cycles})")
+            if self.state.get("finished"):
+                delay = 3600
+                log(f"проект остановлен — heartbeat через {delay}с "
+                    f"(всего циклов: {self.cycles})")
+            else:
+                delay = self.args.cycle_delay
+                log(f"следующий цикл через {delay}с "
+                    f"(всего циклов: {self.cycles})")
             await asyncio.sleep(delay)
 
 
@@ -419,6 +448,9 @@ def main() -> None:
     ap.add_argument("--state-file", default="")
     ap.add_argument("--once", action="store_true",
                     help="один цикл и выход (тест)")
+    ap.add_argument("--restart-project", action="store_true",
+                    help="сброс состояния: следующий цикл начнёт НОВЫЙ чат "
+                         "в папке проекта (с инструкциями) и выйдет")
     ap.add_argument("--max-messages", type=int, default=200,
                     help="порог пересоздания чата (сообщений на экране)")
     ap.add_argument("--reply-timeout", type=float, default=1500,
@@ -436,6 +468,21 @@ def main() -> None:
         args.repo_path = str(ROOT / "projects" / args.project)
     if not args.state_file:
         args.state_file = str(ROOT / "agent_jo" / f"state_{args.project}.json")
+
+    if args.restart_project:
+        st = State(Path(args.state_file))
+        for key, val in (("conversation_id", None),
+                         ("context_sent", False),
+                         ("finished", False),
+                         ("finished_reason", None),
+                         ("finished_at", None),
+                         ("last_reply_tail", None),
+                         ("last_sent", None)):
+            st.data[key] = val
+        st.save()
+        print(f"{args.project}: состояние сброшено — новый чат в папке "
+              f"проекта с инструкциями (@GitHub {args.repo_name})")
+        return
 
     driver = JoDriver(args)
     asyncio.run(driver.run())

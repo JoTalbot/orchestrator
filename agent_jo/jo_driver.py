@@ -343,7 +343,8 @@ class JoDriver:
             except Exception:
                 users = []
             if users and not any(
-                    (u or "").lstrip().startswith("@GitHub") for u in users):
+                    "Продолжаем работать над проектом" in (u or "")
+                    for u in users):
                 log("INIT не зафиксирован в чате — отправляю повторно")
                 reply = await self.ui.send(msg, self.args.reply_timeout)
             self._after_reply(reply, msg)

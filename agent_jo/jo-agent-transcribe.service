@@ -5,7 +5,7 @@ After=network.target docker.service
 [Service]
 User=ubuntu
 WorkingDirectory=/opt/orchestrator
-ExecStart=/opt/orchestrator/.venv/bin/python -u agent_jo/jo_driver.py --project transcribe --repo-path /opt/orchestrator/projects/transcribe --cycle-delay 180
+ExecStart=/opt/orchestrator/.venv/bin/python -u agent_jo/jo_driver.py --project transcribe --repo-path /opt/orchestrator/projects/transcribe --cycle-delay 60
 Restart=always
 RestartSec=60
 Environment=PYTHONUNBUFFERED=1

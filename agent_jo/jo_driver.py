@@ -201,6 +201,10 @@ class JoDriver:
         проекте. Переход по URL внутри живой вкладки не работает:
         navigate_to() считает «проект» и «проект/чат» одним URL
         (_same_url) и не навигирует — вкладка остаётся на последнем чате.
+
+        SPA создаёт чат асинхронно и может открыть его в отдельной вкладке
+        (наша остаётся на /project) — поэтому ждём до 90с появления /c/<id>
+        и при необходимости присоединяемся к вкладке чата.
         """
         log(f"открываю НОВЫЙ чат в папке проекта: {self.args.project_url}")
         self.ui.conversation_id = None  # не редиректить на старый чат
@@ -215,6 +219,33 @@ class JoDriver:
             raise RuntimeError("не удалось открыть вкладку для нового чата")
         await asyncio.sleep(12)
         await self.ui._dismiss_popups()
+        opened_id = self.ui.tab_id
+        # подтолкнуть SPA: клик по «New chat», если он виден
+        try:
+            clicked = await self.ui.tab.evaluate(
+                "() => { const b = Array.from(document.querySelectorAll("
+                "'button, a')).find(x => /new chat/i.test(x.textContent || ''));"
+                " if (b) { b.click(); return true; } return false; }")
+            if clicked:
+                log("клик по «New chat»")
+        except Exception:
+            pass
+        # ждём, пока SPA создаст чат: /c/<id> в URL нашей вкладки или
+        # вкладка нового чата проекта (SPA открыл его отдельно)
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            if self._conv_from_url(await self.ui.current_url()):
+                break
+            if await self.ui.attach_to_project_chat(self.args.project_url):
+                break
+            await asyncio.sleep(3)
+        if self.ui.tab_id != opened_id and opened_id:
+            # чат открыт в другой вкладке — лишнюю закрываем
+            try:
+                self.ui.cdp.close_tab(opened_id)
+            except Exception:
+                pass
+        log(f"вкладка нового чата: {(await self.ui.current_url() or '')[:90]}")
 
     # -------------------------------------------------- контекст из старых чатов
 
@@ -291,6 +322,16 @@ class JoDriver:
             msg = jo_style.compose("INIT", ctx, 0)
             log(f"→ новый чат: {msg[:120]}...")
             reply = await self.ui.send(msg, self.args.reply_timeout)
+            # INIT мог потеряться при создании чата — проверяем и
+            # при необходимости отправляем повторно
+            try:
+                users = await self.ui.user_messages()
+            except Exception:
+                users = []
+            if users and not any(
+                    (u or "").lstrip().startswith("@GitHub") for u in users):
+                log("INIT не зафиксирован в чате — отправляю повторно")
+                reply = await self.ui.send(msg, self.args.reply_timeout)
             self._after_reply(reply, msg)
             new_id = self.state.get("conversation_id")
             log(f"ид нового чата: {str(new_id)[:13] if new_id else 'НЕ ОПРЕДЕЛЁН'}…")
@@ -351,7 +392,17 @@ class JoDriver:
                     self.state.set("last_reply_tail",
                                    reply[-800:].replace("\n", " "))
                 else:
-                    self.state.set("context_sent", False)  # повторим
+                    # контекст мог уйти, хотя проверка отправки его не
+                    # увидела — сверяемся с последним user-сообщением
+                    try:
+                        users = await self.ui.user_messages()
+                    except Exception:
+                        users = []
+                    if users and (users[-1] or "").lstrip().startswith(
+                            "Контекст из предыдущих"):
+                        log("контекст уже в чате — не дублируем")
+                    else:
+                        self.state.set("context_sent", False)  # повторим
                 return
             self.state.set("context_sent", True)
         # ---- что происходит в чате

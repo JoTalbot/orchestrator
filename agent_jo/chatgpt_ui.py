@@ -199,6 +199,32 @@ class ChatGPTUI:
                 return True
         return False
 
+    async def attach_to_project_chat(self, project_url: str) -> bool:
+        """Присоединиться к вкладке нового чата папки проекта.
+
+        SPA может открыть созданный чат в отдельной вкладке — тогда наша
+        вкладка остаётся на /project, а сообщения надо слать в ту, где
+        реально есть чат: {project_url}/c/<id>.
+        """
+        base = (project_url or "").split("?")[0].split("#")[0].rstrip("/")
+        if not base:
+            return False
+        for t in self.cdp.tabs():
+            url = (t.get("url") or "").split("?")[0].split("#")[0].rstrip("/")
+            if t.get("type") == "page" and url.startswith(base + "/c/"):
+                old = self.tab
+                self.tab = await CDPTab(t["webSocketDebuggerUrl"],
+                                        target_id=t.get("id")).connect()
+                if old is not None and old is not self.tab:
+                    await old.close()
+                self.tab_id = t.get("id")
+                self.desired_url = url
+                self.conversation_id = self._conv_id_from_url(url)
+                self.log(f"присоединился к вкладке нового чата проекта "
+                         f"{str(self.conversation_id)[:8]}…")
+                return True
+        return False
+
     async def open_chat(self, conv_id: str, project_url: str = "",
                         marker: str = "") -> bool:
         """Открыть чат в текущей вкладке любым способом (True = открыт).

@@ -4,6 +4,14 @@
 
 Браузер сам решает proof-of-work и turnstile, поэтому здесь не нужны
 обходы — просто печатаем сообщения как человек и читаем ответы.
+
+v2 — живучесть браузерного слоя:
+  * драйвер держит ОДНУ свою вкладку (tab_id в состоянии) и переиспользует
+    её между циклами и перезапусками службы — вкладки не накапливаются;
+  * ensure_alive()/recover() восстанавливают работу после обрыва CDP или
+    перезапуска Chromium: reconnect к своей вкладке, иначе новая;
+  * отправка и ожидание ответа сами переподключаются при обрыве, вместо
+    вечного dead-loop «ошибка цикла: ConnectionClosedError».
 """
 
 import asyncio
@@ -11,7 +19,7 @@ import json
 import re
 import time
 
-from cdp import CDPBrowser
+from cdp import CDPBrowser, CDPConnectionLost, CDPTab
 
 
 class ChatGPTUI:
@@ -19,42 +27,157 @@ class ChatGPTUI:
                  log=print, poll_sec: float = 8.0):
         self.cdp = CDPBrowser(cdp_base)
         self.tab = None
+        self.tab_id = None          # id НАШЕЙ вкладки (переиспользуем её)
+        self.desired_url = None     # куда вкладка должна вернуться после сбоя
         self.log = log
         self.poll_sec = poll_sec
         self.conversation_id = None
 
     # ---------------------------------------------------------- управление
 
-    async def start(self, url: str = "https://chatgpt.com/"):
-        """Новая вкладка + загрузка SPA."""
-        self.tab = await self.cdp.new_tab(url).connect()
-        await self.tab.navigate(url, timeout=90)
-        await asyncio.sleep(6)
-        return self
+    async def start(self, url: str = "https://chatgpt.com/", tab_id: str = ""):
+        """Вкладка + загрузка SPA. Если tab_id жив — переподключаемся к ней."""
+        return await self.ensure_alive(url=url, tab_id=tab_id,
+                                       force_new=not tab_id)
 
-    async def ensure_alive(self):
-        """Переподключение, если вкладку закрыли (например, другой процесс)."""
+    @staticmethod
+    def _same_url(a: str, b: str) -> bool:
+        """Сравнение URL без query-хвоста и хвостового слеша."""
+        def norm(u: str) -> str:
+            return (u or "").split("?")[0].split("#")[0].rstrip("/")
+        na, nb = norm(a), norm(b)
+        return bool(na) and (na == nb or na.startswith(nb + "/")
+                             or nb.startswith(na + "/"))
+
+    async def ensure_alive(self, url: str | None = None,
+                           tab_id: str | None = None,
+                           force_new: bool = False) -> bool:
+        """Гарантировать живое соединение со СВОЕЙ вкладкой ChatGPT.
+
+        1) переподключиться к своей вкладке по id (если она ещё существует);
+        2) если соединение живо — ничего не делать;
+        3) иначе открыть новую вкладку и запомнить её id.
+
+        Возвращает True, если есть рабочая вкладка; исключений не бросает.
+        """
+        if url:
+            self.desired_url = url
+        target = url or self.desired_url or self._fallback_url()
+
+        # --- 1) своя вкладка по id
+        tid = tab_id or self.tab_id
+        if tid and not force_new:
+            t = self.cdp.tab_by_id(tid)
+            if t:
+                if self.tab is not None and self.tab.is_open \
+                        and self.tab.target_id == tid:
+                    try:
+                        cur = await self.current_url()
+                        if self._needs_nav(cur, target):
+                            await self.tab.navigate(target, timeout=120)
+                        return True
+                    except Exception as e:
+                        self.log(f"соединение с вкладкой сломалось ({e}) — reconnect")
+                else:
+                    try:
+                        old = self.tab
+                        self.tab = await CDPTab(
+                            t["webSocketDebuggerUrl"], target_id=tid).connect()
+                        self.tab_id = tid
+                        if old is not None:
+                            await old.close()
+                        cur = await self.current_url()
+                        self.log(f"переподключился к своей вкладке {str(tid)[:8]}… "
+                                 f"({str(cur)[:60]})")
+                        if self._needs_nav(cur, target):
+                            await self.tab.navigate(target, timeout=120)
+                        return True
+                    except Exception as e:
+                        self.log(f"переподключение к вкладке {str(tid)[:8]}… "
+                                 f"не удалось: {type(e).__name__}: {e}")
+            else:
+                self.log(f"своей вкладки {str(tid)[:8]}… уже нет — открою новую")
+                self.tab_id = None
+
+        # --- 2) соединение живо
+        if self.tab is not None and self.tab.is_open and not force_new:
+            return True
+
+        # --- 3) новая вкладка
         try:
-            url = await self.tab.evaluate("location.href")
-            return
-        except Exception:
-            self.log("вкладка мертва, создаём новую")
-            target = "https://chatgpt.com/"
-            if self.conversation_id:
-                target = f"https://chatgpt.com/c/{self.conversation_id}"
-            await self.start(target)
+            tab = self.cdp.open_tab(target)
+            self.tab = await tab.connect()
+            self.tab_id = tab.target_id
+            self.log(f"открыл вкладку {str(self.tab_id)[:8]}… ({target[:60]})")
             await asyncio.sleep(4)
+            return True
+        except Exception as e:
+            self.log(f"не удалось открыть вкладку: {type(e).__name__}: {e}")
+            self.tab = None
+            self.tab_id = None
+            return False
+
+    @staticmethod
+    def _needs_nav(cur: str | None, target: str | None) -> bool:
+        """Нужно ли вести вкладку на target: только если она не на ChatGPT."""
+        if not target:
+            return False
+        cur = str(cur or "")
+        if not cur or cur.startswith("about:"):
+            return True
+        return "chatgpt.com" not in cur
+
+    def _require_open(self):
+        """Упасть с CDPConnectionLost, если соединение/вкладка уже мертвы."""
+        if self.tab is None or not self.tab.is_open:
+            raise CDPConnectionLost("CDP-соединение закрыто")
+
+    def _fallback_url(self) -> str:
+        if self.conversation_id:
+            return f"https://chatgpt.com/c/{self.conversation_id}"
+        return "https://chatgpt.com/"
+
+    async def navigate_to(self, url: str, timeout: float = 120):
+        """Перейти на url внутри своей вкладки (с восстановлением при обрыве)."""
+        self.desired_url = url
+        if not await self.ensure_alive(url=url, tab_id=self.tab_id):
+            raise CDPConnectionLost("нет живой вкладки для перехода")
+        cur = await self.current_url()
+        if cur and self._same_url(cur, url):
+            return cur
+        await self.tab.navigate(url, timeout=timeout)
+        return await self.current_url()
+
+    async def recover(self, why: str, url: str | None = None) -> bool:
+        """Восстановление после обрыва CDP: лог + reconnect/новая вкладка."""
+        self.log(f"обрыв CDP ({why}) — восстанавливаю соединение")
+        return await self.ensure_alive(url=url or self.desired_url,
+                                       tab_id=self.tab_id)
 
     async def close(self):
+        """Закрыть соединение (вкладку НЕ трогаем — её переиспользуем)."""
         if self.tab:
             await self.tab.close()
 
+    async def close_own_tab(self):
+        """Закрыть соединение и свою вкладку (для разовых запусков --once)."""
+        await self.close()
+        if self.tab_id:
+            self.cdp.close_tab(self.tab_id)
+            self.tab_id = None
+
     async def session_user(self) -> str:
-        txt = await self.tab.evaluate(
-            "fetch('/api/auth/session').then(r=>r.json()).then(d=>JSON.stringify(d))",
-            await_promise=True, timeout=60)
-        d = json.loads(txt or "{}")
-        return (d.get("user") or {}).get("email", "?")
+        try:
+            txt = await self.tab.evaluate(
+                "fetch('/api/auth/session').then(r=>r.json()).then(d=>JSON.stringify(d))",
+                await_promise=True, timeout=60)
+            d = json.loads(txt or "{}")
+            return (d.get("user") or {}).get("email", "?")
+        except CDPConnectionLost:
+            raise
+        except Exception as e:
+            self.log(f"сессию прочитать не удалось: {type(e).__name__}: {e}")
+            return "?"
 
     async def attach_to_conversation(self, conv_id: str) -> bool:
         """Присоединиться к УЖЕ открытой вкладке этого чата (если есть).
@@ -64,8 +187,13 @@ class ChatGPTUI:
         """
         for t in self.cdp.tabs():
             if t.get("type") == "page" and f"/c/{conv_id}" in t.get("url", ""):
-                from cdp import CDPTab
-                self.tab = await CDPTab(t["webSocketDebuggerUrl"]).connect()
+                old = self.tab
+                self.tab = await CDPTab(t["webSocketDebuggerUrl"],
+                                        target_id=t.get("id")).connect()
+                if old is not None and old is not self.tab:
+                    await old.close()
+                self.tab_id = t.get("id")
+                self.desired_url = t.get("url")
                 self.conversation_id = conv_id
                 self.log(f"присоединился к существующей вкладке чата {conv_id[:8]}…")
                 return True
@@ -89,12 +217,15 @@ class ChatGPTUI:
                 self.log(f"переход на проект не удался: {e}")
             deadline = time.time() + 300
             while time.time() < deadline:
+                self._require_open()  # обрыв CDP -> наверх, цикл восстановится
                 # 1) точное совпадение href
                 try:
                     clicked = await self.tab.evaluate(
                         f"() => {{ const a = document.querySelector("
                         f"'a[href*=\"/c/{conv_id}\"]');"
                         f" if (!a) return false; a.click(); return true; }}")
+                except CDPConnectionLost:
+                    raise
                 except Exception:
                     clicked = False
                 if clicked:
@@ -218,10 +349,13 @@ class ChatGPTUI:
         if ok:
             await asyncio.sleep(3)
         href = await self.tab.evaluate(
-            "(() => { const a = Array.from(document.querySelectorAll('a[href*=\"/g/g-p-\"]'))"
-            " .find(x => (x.innerText||'').trim() !== ''); return a ? a.getAttribute('href') : null; })()")
+            "(() => { const links = Array.from(document.querySelectorAll('a[href*=\"/g/g-p-\"]'))"
+            " .map(a => a.getAttribute('href') || '')"
+            " .filter(h => h && h.indexOf('/c/') === -1);"  # именно ПАПКА, не чат
+            " return links.length ? links[0] : null; })()")
         if href:
             full = href if href.startswith("http") else "https://chatgpt.com" + href.split("?")[0]
+            full = full.split("/c/")[0].rstrip("/")  # срезаем хвост чата, если попал
             await self.tab.navigate(full, timeout=120)
             await asyncio.sleep(8)
             return await self.current_url()
@@ -239,6 +373,7 @@ class ChatGPTUI:
         # дождаться редактора (страница может грузиться долго; при нехватке
         # памяти на сервере — до 6 минут, с одной перезагрузкой страницы)
         deadline = time.time() + 360
+        self._require_open()
         start = time.time()
         reloaded = False
         ok = False
@@ -248,6 +383,8 @@ class ChatGPTUI:
                     "() => { const el = document.querySelector('#prompt-textarea')"
                     " || document.querySelector('div[contenteditable=\"true\"]');"
                     " if (!el) return false; el.focus(); return true; }")
+            except CDPConnectionLost:
+                raise
             except Exception:
                 ok = False
             if ok:
@@ -261,9 +398,14 @@ class ChatGPTUI:
                 reloaded = True
                 await asyncio.sleep(20)
                 continue
-            dbg = await self.tab.evaluate(
-                "() => location.href + ' | body:' + !!document.body + "
-                " ' | editable:' + document.querySelectorAll('div[contenteditable=\"true\"]').length")
+            try:
+                dbg = await self.tab.evaluate(
+                    "() => location.href + ' | body:' + !!document.body + "
+                    " ' | editable:' + document.querySelectorAll('div[contenteditable=\"true\"]').length")
+            except CDPConnectionLost:
+                raise
+            except Exception as e:
+                dbg = f"(диагностика недоступна: {e})"
             self.log(f"редактора нет: {dbg}")
             await asyncio.sleep(6)
         if not ok:
@@ -326,7 +468,14 @@ class ChatGPTUI:
             before = None
         sent = False
         for attempt in range(3):
-            await self._type_and_send(text)
+            try:
+                await self._type_and_send(text)
+            except CDPConnectionLost as e:
+                if not await self.recover(f"обрыв при вводе: {e}"):
+                    self.log("браузер не восстановился — сообщение не отправлено")
+                    return None
+                await asyncio.sleep(5)
+                continue
             # подтверждение: user-сообщений стало больше или пошла генерация
             for _ in range(10):
                 await asyncio.sleep(4)
@@ -342,6 +491,8 @@ class ChatGPTUI:
                     if before is not None and n > before:
                         sent = True
                         break
+                except CDPConnectionLost as e:
+                    await self.recover(f"обрыв при проверке отправки: {e}")
                 except Exception:
                     pass
             if sent:
@@ -392,6 +543,10 @@ class ChatGPTUI:
             try:
                 gen = await self.is_generating()
                 msgs = await self.assistant_messages()
+            except CDPConnectionLost as e:
+                await self.recover(f"обрыв при опросе DOM: {e}")
+                await asyncio.sleep(self.poll_sec)
+                continue
             except Exception as e:
                 self.log(f"ошибка опроса DOM: {e}")
                 await asyncio.sleep(self.poll_sec)

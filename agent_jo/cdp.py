@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Минимальный CDP-клиент поверх page-level websocket (обход лимита
-browser-level ws: Chromium держит только одно подключение на /devtools/browser)."""
+browser-level ws: Chromium держит только одно подключение на /devtools/browser).
+
+v2 — устойчивость к обрывам. Соединение с Chrome рвётся в любой момент:
+перезапуск Chromium (в контейнере liza-browser есть watchdog), тяжёлая
+страница, обрыв через socat-прокси :9222 -> :9223. Раньше это давало вечный
+dead-loop: цикл падал на мёртвом соединении, не переподключался и продолжал
+падать каждые 3 минуты.
+
+Теперь:
+  * CDPTab отслеживает состояние соединения (self.closed / last_error);
+  * любая команда на закрытом соединении даёт CDPConnectionLost;
+  * CDPBrowser умеет найти вкладку по id, открыть/закрыть конкретную вкладку —
+    чтобы драйвер переиспользовал СВОЮ вкладку, а не плодил новые.
+"""
 
 import asyncio
 import json
+import time
+import urllib.parse
 import urllib.request
 
 import websockets
+
+
+class CDPConnectionLost(RuntimeError):
+    """Websocket-соединение с таргетом разорвано — нужен reconnect."""
 
 
 async def http_json(url: str, method: str = "GET", timeout: float = 10):
@@ -25,20 +44,53 @@ def sync_http_json(url: str, method: str = "GET", timeout: float = 30):
 class CDPTab:
     """Управление одной вкладкой Chrome через page-level CDP websocket."""
 
-    def __init__(self, ws_url: str):
+    def __init__(self, ws_url: str, target_id: str | None = None):
         self.ws_url = ws_url
+        self.target_id = target_id
         self.ws = None
+        self.closed = True
+        self.last_error = None
+        self.connects = 0
         self._id = 0
         self._events = asyncio.Queue()
         self._pending = {}
         self._listener = None
 
+    # ------------------------------------------------------------ состояние
+
+    @property
+    def is_open(self) -> bool:
+        """Соединение живо и слушатель работает."""
+        if self.ws is None or self.closed or self.ws is None:
+            return False
+        if self._listener is None or self._listener.done():
+            return False
+        try:
+            state = getattr(self.ws, "state", None)
+            if state is not None and str(state).endswith("CLOSED"):
+                return False
+        except Exception:
+            pass
+        return True
+
+    # ------------------------------------------------------------ соединение
+
     async def connect(self):
         self.ws = await websockets.connect(
             self.ws_url, max_size=64 * 1024 * 1024, ping_interval=30,
             open_timeout=30, close_timeout=10)
+        self.closed = False
+        self.last_error = None
+        self.connects += 1
         self._listener = asyncio.create_task(self._listen())
         return self
+
+    async def reconnect(self):
+        """Переподключиться к тому же таргету (id вкладки не меняется)."""
+        await self.close()
+        self._pending.clear()
+        self._events = asyncio.Queue()
+        return await self.connect()
 
     async def _listen(self):
         try:
@@ -53,22 +105,42 @@ class CDPTab:
                         fut.set_result(data)
                 elif "method" in data:
                     self._events.put_nowait(data)
-        except Exception:
-            pass
+        except Exception as e:
+            # обрыв без close-frame: Chrome умер/перезапустился, порвался прокси
+            self.last_error = f"{type(e).__name__}: {e}"
+        finally:
+            self.closed = True
 
     async def cmd(self, method: str, params: dict | None = None,
                   timeout: float = 30):
+        if not self.is_open:
+            raise CDPConnectionLost(
+                self.last_error or "CDP-соединение закрыто (нужен reconnect)")
         self._id += 1
         mid = self._id
         msg = {"id": mid, "method": method, "params": params or {}}
         fut = asyncio.get_running_loop().create_future()
         self._pending[mid] = fut
-        await self.ws.send(json.dumps(msg))
+        try:
+            await self.ws.send(json.dumps(msg))
+        except Exception as e:
+            self._pending.pop(mid, None)
+            self.closed = True
+            self.last_error = f"send: {type(e).__name__}: {e}"
+            raise CDPConnectionLost(self.last_error) from e
         try:
             return await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError:
             self._pending.pop(mid, None)
             raise
+        except CDPConnectionLost:
+            raise
+        except Exception as e:
+            # соединение закрылось, пока ждали ответ
+            self._pending.pop(mid, None)
+            self.closed = True
+            self.last_error = f"recv: {type(e).__name__}: {e}"
+            raise CDPConnectionLost(self.last_error) from e
 
     async def wait_event(self, method: str, timeout: float = 60):
         deadline = asyncio.get_running_loop().time() + timeout
@@ -121,6 +193,8 @@ class CDPTab:
                 await self.ws.close()
         except Exception:
             pass
+        finally:
+            self.closed = True
 
 
 class CDPBrowser:
@@ -132,19 +206,44 @@ class CDPBrowser:
     def tabs(self) -> list[dict]:
         return sync_http_json(f"{self.base}/json/list")
 
-    def new_tab(self, url: str = "about:blank") -> CDPTab:
-        import urllib.parse
-        import time
+    def tab_by_id(self, target_id: str) -> dict | None:
+        """Найти вкладку по id (None — вкладки больше нет)."""
+        if not target_id:
+            return None
+        try:
+            for t in self.tabs():
+                if t.get("id") == target_id and t.get("type") == "page":
+                    return t
+        except Exception:
+            return None
+        return None
+
+    def open_tab(self, url: str = "about:blank") -> CDPTab:
+        """Открыть вкладку; вернуть НЕподключённый CDPTab с target_id."""
         target = f"{self.base}/json/new?{urllib.parse.quote(url, safe='')}"
         last_err = None
         for attempt in range(5):
             try:
                 d = sync_http_json(target, method="PUT", timeout=30)
-                return CDPTab(d["webSocketDebuggerUrl"])
+                return CDPTab(d["webSocketDebuggerUrl"], target_id=d.get("id"))
             except Exception as e:
                 last_err = e
                 time.sleep(5)
         raise RuntimeError(f"не удалось создать вкладку: {last_err}")
+
+    def new_tab(self, url: str = "about:blank") -> CDPTab:
+        return self.open_tab(url)
+
+    def close_tab(self, target_id: str) -> bool:
+        """Закрыть ОДНУ конкретную вкладку (чужие не трогаем)."""
+        if not target_id:
+            return False
+        try:
+            urllib.request.urlopen(f"{self.base}/json/close/{target_id}",
+                                   timeout=20)
+            return True
+        except Exception:
+            return False
 
     def version(self) -> dict:
         return sync_http_json(f"{self.base}/json/version")

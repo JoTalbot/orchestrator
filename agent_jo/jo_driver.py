@@ -24,7 +24,9 @@ import asyncio
 import json
 import re
 import subprocess
+import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,6 +133,7 @@ class JoDriver:
         self.state = State(Path(args.state_file))
         self.cycles = self.state.get("cycles", 0)
         self.stuck_streak = 0
+        self.errors_streak = 0
 
     @staticmethod
     def _conv_from_url(url: str) -> str | None:
@@ -190,7 +193,7 @@ class JoDriver:
     async def open_project_fresh_chat(self):
         """Открывает страницу проекта (новый чат в папке проекта)."""
         log(f"открываю папку проекта: {self.args.project_url}")
-        await self.ui.tab.navigate(self.args.project_url, timeout=120)
+        await self.ui.navigate_to(self.args.project_url, timeout=120)
         await asyncio.sleep(12)
         await self.ui._dismiss_popups()
 
@@ -230,6 +233,18 @@ class JoDriver:
                 "пройденное):\n\n" + ctx)
 
     async def run_cycle(self) -> None:
+        # 0) папка проекта и ЖИВОЙ браузер — гарантия на входе в любой цикл
+        if not self.args.project_url:
+            url = await self.resolve_project_url()
+            if url:
+                self.args.project_url = url
+        if not await self.ui.ensure_alive(
+                url=self.args.project_url or None,
+                tab_id=self.state.get("tab_id")):
+            log("нет живого браузера — цикл пропущен")
+            return
+        self.state.set("tab_id", self.ui.tab_id)
+
         st = repo_state(self.args.repo_path)
         ctx = {
             "repo_name": self.args.repo_name,
@@ -243,11 +258,10 @@ class JoDriver:
 
         if not conv_id:
             # ---- старт нового чата в СУЩЕСТВУЮЩЕЙ папке проекта
-            project_url = await self.resolve_project_url()
+            project_url = self.args.project_url
             if not project_url:
                 log(f"папка проекта {self.args.project!r} не найдена — цикл пропущен")
                 return
-            self.args.project_url = project_url
             await self.open_project_fresh_chat()
             user = await self.ui.session_user()
             log(f"сессия ChatGPT: {user}")
@@ -257,7 +271,9 @@ class JoDriver:
             self._after_reply(reply, msg)
             return
 
-        await self.ui.ensure_alive()
+        if not await self.ui.ensure_alive(tab_id=self.state.get("tab_id")):
+            log("нет живого браузера — цикл пропущен")
+            return
         # ---- продолжить ИМЕННО в существующем чате
         # Канонический URL чата: .../g/{project_gizmo}/c/{conv_id} — короткий
         # /c/{conv_id} SPA иногда откатывает на главную, канонический нет.
@@ -267,8 +283,6 @@ class JoDriver:
             # сначала пробуем присоединиться к уже открытой вкладке чата
             attached = await self.ui.attach_to_conversation(conv_id)
             if attached:
-                self.ui.cdp.close_tabs(fragment="https://chatgpt.com/",
-                                       exact=True)
                 await asyncio.sleep(3)
             else:
                 log(f"открываю чат {conv_id[:8]}…")
@@ -352,30 +366,42 @@ class JoDriver:
                 self.stuck_streak = 0
 
     async def run(self) -> None:
-        # старт вкладки с ретраями (CDP может тормозить при высокой нагрузке)
+        # старт: подключаемся к СВОЕЙ вкладке (или открываем новую) с ретраями
         started = False
         for attempt in range(10):
             try:
-                await self.ui.start()
-                started = True
-                break
+                if await self.ui.ensure_alive(tab_id=self.state.get("tab_id")):
+                    started = True
+                    break
             except Exception as e:
-                log(f"старт вкладки не удался ({type(e).__name__}: {e}), "
-                    f"повтор через 30с ({attempt + 1}/10)")
-                await asyncio.sleep(30)
+                log(f"старт вкладки не удался ({type(e).__name__}: {e})")
+            log(f"браузер недоступен, повтор через 30с ({attempt + 1}/10)")
+            await asyncio.sleep(30)
         if not started:
-            log("не смог стартовать вкладку за 10 попыток — выхожу")
+            log("не смог получить живую вкладку за 10 попыток — выхожу")
             return
+        self.state.set("tab_id", self.ui.tab_id)
         log(f"сессия ChatGPT: {await self.ui.session_user()}")
         if self.args.once:
-            await self.run_cycle()
-            await self.ui.close()
+            try:
+                await self.run_cycle()
+            except Exception:
+                log("трейсбек цикла:\n" + traceback.format_exc().strip())
+            await self.ui.close_own_tab()
             return
         while True:
             try:
                 await self.run_cycle()
+                self.errors_streak = 0
             except Exception as e:
-                log(f"ошибка цикла: {type(e).__name__}: {e}")
+                self.errors_streak += 1
+                log(f"ошибка цикла ({self.errors_streak} подряд): "
+                    f"{type(e).__name__}: {e}")
+                log("трейсбек:\n" + traceback.format_exc().strip())
+                if self.errors_streak >= self.args.max_errors:
+                    log(f"{self.errors_streak} ошибок подряд — выхожу, "
+                        f"systemd поднимет службу заново")
+                    sys.exit(1)
             delay = self.args.cycle_delay
             log(f"следующий цикл через {delay}с (всего циклов: {self.cycles})")
             await asyncio.sleep(delay)
@@ -399,6 +425,8 @@ def main() -> None:
                     help="таймаут ожидания ответа, сек")
     ap.add_argument("--cycle-delay", type=int, default=120,
                     help="пауза между циклами, сек")
+    ap.add_argument("--max-errors", type=int, default=5,
+                    help="сколько ошибок цикла подряд до перезапуска службы")
     args = ap.parse_args()
     if not args.repo_name:
         args.repo_name = f"JoTalbot/{args.project}"

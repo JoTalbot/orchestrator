@@ -206,7 +206,7 @@ class JoDriver:
         self.ui.conversation_id = None  # не редиректить на старый чат
         if self.ui.tab_id:
             try:
-                self.ui.close_own_tab()
+                await self.ui.close_own_tab()
             except Exception as e:
                 log(f"старую вкладку закрыть не удалось ({e}) — "
                     f"открываю новую")

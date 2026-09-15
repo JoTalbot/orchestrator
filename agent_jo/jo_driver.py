@@ -214,6 +214,19 @@ class JoDriver:
             except Exception as e:
                 log(f"старую вкладку закрыть не удалось ({e}) — "
                     f"открываю новую")
+        # id вкладок чатов проекта, которые уже существуют —
+        # к ним НЕ присоединяемся (ищем только НОВЫЙ чат)
+        pre_chats: set = set()
+        base_url = ((self.args.project_url or "")
+                    .split("?")[0].split("#")[0].rstrip("/"))
+        try:
+            for t in self.ui.cdp.tabs():
+                url = (t.get("url") or "").split("?")[0].split("#")[0].rstrip("/")
+                if (t.get("type") == "page" and base_url
+                        and url.startswith(base_url + "/c/")):
+                    pre_chats.add(t.get("id"))
+        except Exception:
+            pass
         if not await self.ui.ensure_alive(url=self.args.project_url,
                                           force_new=True):
             raise RuntimeError("не удалось открыть вкладку для нового чата")
@@ -236,7 +249,8 @@ class JoDriver:
         while time.time() < deadline:
             if self._conv_from_url(await self.ui.current_url()):
                 break
-            if await self.ui.attach_to_project_chat(self.args.project_url):
+            if await self.ui.attach_to_project_chat(
+                    self.args.project_url, exclude=pre_chats):
                 break
             await asyncio.sleep(3)
         if self.ui.tab_id != opened_id and opened_id:

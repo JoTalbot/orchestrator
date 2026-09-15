@@ -199,17 +199,23 @@ class ChatGPTUI:
                 return True
         return False
 
-    async def attach_to_project_chat(self, project_url: str) -> bool:
+    async def attach_to_project_chat(self, project_url: str,
+                                     exclude: set | None = None) -> bool:
         """Присоединиться к вкладке нового чата папки проекта.
 
         SPA может открыть созданный чат в отдельной вкладке — тогда наша
         вкладка остаётся на /project, а сообщения надо слать в ту, где
         реально есть чат: {project_url}/c/<id>.
+
+        exclude — id вкладок, которых НЕ надо трогать (старые чаты,
+        существовавшие до создания нового).
         """
         base = (project_url or "").split("?")[0].split("#")[0].rstrip("/")
         if not base:
             return False
         for t in self.cdp.tabs():
+            if exclude and t.get("id") in exclude:
+                continue
             url = (t.get("url") or "").split("?")[0].split("#")[0].rstrip("/")
             if t.get("type") == "page" and url.startswith(base + "/c/"):
                 old = self.tab

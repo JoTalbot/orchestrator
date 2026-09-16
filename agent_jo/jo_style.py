@@ -13,36 +13,17 @@ import re
 
 # ---------------------------------------------------------------- правила
 
-# Первое сообщение нового чата в проекте (старт или handoff)
-NEW_CHAT_HEADER = (
-    "@GitHub {repo_name} Работай над проектом. Выполняй задачи по одной. "
-    "После каждого ответа жди «Продолжить». "
-    "Слово КОНЕЦ пиши ТОЛЬКО когда все задачи полностью выполнены "
-    "и нечего больше делать."
-)
-
+# Первое сообщение нового чата — ТОЛЬКО эта строка, без лишнего текста
 INIT_TEMPLATE = (
-    NEW_CHAT_HEADER
-    + "\n\n"
-    + "Репозиторий: {repo_url}\n"
-    "GitHub: {github_pat}\n"
-    "Проанализируй весь доступный контекст: читай README.md, docs/ROADMAP.md, "
-    "статус, историю коммитов в репозитории.\n"
-    "Состояние:\n{repo_summary}\n"
-    "Работай над проектом в этом чате до завершения. Каждый шаг пиши на русском."
+    "@GitHub {repo_name} При завершении работ над проектом писать "
+    "в конце сообщения: КОНЕЦ. Во время работы слово КОНЕЦ не использовать."
 )
 
 HANDOFF_TEMPLATE = (
-    NEW_CHAT_HEADER
-    + "\n\n"
-    + "(Контекст прошлого чата разросся — новый чат в папке проекта, "
-    "продолжение работы.)\n"
-    "Репозиторий: {repo_url}\n"
-    "GitHub: {github_pat}\n"
-    "Состояние:\n{repo_summary}\n"
-    "Продолжи с текущего состояния: выбери следующую задачу, выполни, "
-    "протестируй, исправь регрессии и подготовь изменения к push. "
-    "Каждый шаг пиши на русском."
+    "@GitHub {repo_name} При завершении работ над проектом писать "
+    "в конце сообщения: КОНЕЦ. Во время работы слово КОНЕЦ не использовать."
+    "\n\n"
+    "(Контекст прошлого чата разросся — новый чат, продолжение работы.)"
 )
 
 # По ходу работы — «Продолжить»
@@ -79,14 +60,8 @@ def compose(kind: str, ctx: dict, n: int) -> str:
     """Собрать сообщение в стиле Jo. ctx: repo_name, repo_url, github_pat,
     repo_summary, tasks."""
     if kind == "INIT":
-        return INIT_TEMPLATE.format(
-            repo_name=ctx["repo_name"], repo_url=ctx["repo_url"],
-            github_pat=ctx.get("github_pat", ""),
-            repo_summary=ctx.get("repo_summary", "см. репозиторий"))
+        return INIT_TEMPLATE.format(repo_name=ctx["repo_name"])
     if kind == "HANDOFF":
-        return HANDOFF_TEMPLATE.format(
-            repo_name=ctx["repo_name"], repo_url=ctx["repo_url"],
-            github_pat=ctx.get("github_pat", ""),
-            repo_summary=ctx.get("repo_summary", "см. репозиторий"))
+        return HANDOFF_TEMPLATE.format(repo_name=ctx["repo_name"])
     # CONTINUE — «Продолжить» (протокол работы)
     return CONTINUE_TEMPLATES[n % len(CONTINUE_TEMPLATES)]

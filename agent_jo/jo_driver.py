@@ -6,12 +6,12 @@ Jo-драйвер: автономно ведёт проект в ChatGPT от и
 Цикл:
   1. Читает состояние проекта (git, ROADMAP, статус).
   2. Если чата нет — открывает папку проекта в ChatGPT и стартует новый чат
-     сообщением в стиле Jo.
-  3. Если чат есть — по ходу работы всегда пишет только «+».
-     Если в конце ответа ассистента появилось «КОНЕЦ» — работа над
+     сообщением: @GitHub JoTalbot/<проект> + инструкция про КОНЕЦ.
+  3. Если чат есть — по ходу работы всегда пишет только «Продолжить».
+     Если в ответе ассистента появилось «КОНЕЦ» — работа над
      проектом останавливается (state: finished, heartbeat 1ч).
   4. Если контекст чата разросся — пересоздаёт чат в той же папке проекта
-     с handoff-сообщением (текущее состояние + задачи).
+     с handoff-сообщением.
   5. Пишет лог каждого шага. Всё на русском.
 
 Запуск:
@@ -343,7 +343,7 @@ class JoDriver:
             except Exception:
                 users = []
             if users and not any(
-                    "Продолжаем работать над проектом" in (u or "")
+                    "КОНЕЦ" in (u or "")
                     for u in users):
                 log("INIT не зафиксирован в чате — отправляю повторно")
                 reply = await self.ui.send(msg, self.args.reply_timeout)
@@ -394,32 +394,7 @@ class JoDriver:
             self._after_reply(reply, msg)
             return
 
-        # ---- разовый контекст из старых чатов (P1)
-        if not self.state.get("context_sent"):
-            ctx_msg = self._project_context()
-            if ctx_msg:
-                log(f"→ [CONTEXT] {ctx_msg[:110]}...")
-                reply = await self.ui.send(ctx_msg, self.args.reply_timeout)
-                self.state.set("context_sent", True)
-                if reply:
-                    self.cycles += 1
-                    self.state.set("cycles", self.cycles)
-                    self.state.set("last_reply_tail",
-                                   reply[-800:].replace("\n", " "))
-                else:
-                    # контекст мог уйти, хотя проверка отправки его не
-                    # увидела — сверяемся с последним user-сообщением
-                    try:
-                        users = await self.ui.user_messages()
-                    except Exception:
-                        users = []
-                    if users and (users[-1] or "").lstrip().startswith(
-                            "Контекст из предыдущих"):
-                        log("контекст уже в чате — не дублируем")
-                    else:
-                        self.state.set("context_sent", False)  # повторим
-                return
-            self.state.set("context_sent", True)
+        # ---- контекст из старых чатов отключён (по запросу Jo)
         # ---- что происходит в чате
         if not last_reply:
             try:
@@ -555,7 +530,7 @@ def main() -> None:
     if args.restart_project:
         st = State(Path(args.state_file))
         for key, val in (("conversation_id", None),
-                         ("context_sent", False),
+                         ("context_sent", True),
                          ("finished", False),
                          ("finished_reason", None),
                          ("finished_at", None),

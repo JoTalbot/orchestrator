@@ -188,11 +188,31 @@ reCAPTCHA Enterprise: серия из ~3 запросов подряд с инт
 
 ## 5. Подключение клиентов
 
-### Cursor
-Settings → Models → OpenAI API key:
-* Base URL: `http://<сервер>:8791/v1`
-* API Key: содержимое `.secrets/arena_gateway_token.txt`
+### Cursor / любой внешний клиент
+
+Порт 8791 **не открыт наружу** (ufw default-deny) — это намеренно: токен шлюза
+единственная защита, а провайдер дорогой по темпу. Подключайтесь через SSH-туннель:
+
+```bash
+# на своей машине (туннель держим открытым, пока работаем)
+ssh -N -L 8791:127.0.0.1:8791 -i ~/.ssh/oci_server_key.pem ubuntu@129.213.177.56
+```
+
+Cursor → Settings → Models → OpenAI API key:
+* Base URL: `http://127.0.0.1:8791/v1`
+* API Key: содержимое `/opt/orchestrator/.secrets/arena_gateway_token.txt`
 * Model: `claude-sonnet-4-5-20250929` (или любое имя из `GET /v1/models`)
+
+Если туннель неудобен, можно открыть порт для одного IP (тогда обязателен токен):
+
+```bash
+sudo ufw allow from <ваш-IP> to any port 8791 proto tcp
+```
+
+Помните про темп: Cursor любит слать несколько запросов подряд (контекст, индексация,
+«apply»), а арена за ~3 быстрых запроса ставит флаг reCAPTCHA на аккаунт на десятки
+минут. Для активного кодинга держите шлюз в тихом режиме (`/v1/arena/pause`)
+и используйте арену точечно.
 
 ### OpenAI SDK (Python)
 ```python

@@ -141,7 +141,7 @@ async def on_error(request: Request, exc: Exception):
 @app.get("/health")
 async def health(x_api_key: Optional[str] = Header(None)):
     check_auth(x_api_key)
-    live, me = "not-connected", {}
+    live, me = "not-connected (подключится при первом запросе)", {}
     if _state["api"] is not None:
         try:
             async with browser() as api:
@@ -158,8 +158,11 @@ async def health(x_api_key: Optional[str] = Header(None)):
                             if idx.exists() else 0,
                             "downloaded": len(list((DATA_DIR / "chats").glob("*.json")))
                             if (DATA_DIR / "chats").exists() else 0},
-            "account": {k: me.get(k) for k in
-                        ("email", "username", "subscription", "tier")} if me else None,
+            "account": (lambda u: {"id": u.get("id"),
+                                   "username": u.get("username"),
+                                   "email": u.get("email"),
+                                   "emailProvider": u.get("emailProvider")}
+                        )((me or {}).get("user") or {}) if me else None,
             "export": _state["export"]}
 
 
@@ -194,13 +197,46 @@ async def balance(x_api_key: Optional[str] = Header(None)):
 
 @app.get("/models")
 async def models(x_api_key: Optional[str] = Header(None)):
-    """Список моделей агент-режима (маршрут может быть закрыт — вернём ошибку арены)."""
+    """Список моделей Agent Mode.
+
+    Маршрут арены закрыт фичефлагом `agent-model-selector`, поэтому обычно
+    возвращает 403 «Not allowed». Ответ всегда 200 и структурирован — удобно
+    мониторить появление доступа (см. arena_service/model_watch.py).
+    """
     check_auth(x_api_key)
     async with browser() as api:
         r = await api.agent_models()
         if r["status"] >= 400:
-            raise HTTPException(r["status"], r["body"])
-        return json.loads(r["body"])
+            return {"available": False, "status": r["status"], "models": None,
+                    "error": (r["body"] or "")[:200]}
+        try:
+            data = json.loads(r["body"])
+        except Exception:
+            data = {}
+        return {"available": True, "status": r["status"],
+                "models": data.get("models") or data, "error": None}
+
+
+@app.get("/flags")
+async def flags(x_api_key: Optional[str] = Header(None),
+                only: Optional[str] = Query(None,
+                                            help="фильтр по подстроке в названии флага")):
+    """Feature-флаги аккаунта (из RSC страницы /agent).
+
+    Ключевые для нас: `agent-model-selector` (выбор модели),
+    `agent-harness-randomization` (харнес агента).
+    """
+    check_auth(x_api_key)
+    async with browser() as api:
+        f = await api.feature_flags()
+    if not f:
+        return {"ok": False, "count": 0, "flags": {},
+                "note": "флаги не найдены в пейлоаде страницы"}
+    if only:
+        f = {k: v for k, v in f.items() if only.lower() in k.lower()}
+    return {"ok": True, "count": len(f), "flags": f,
+            "modelSelector": ("agent-model-selector" in f) and
+                             bool(f.get("agent-model-selector"))}
 
 
 @app.get("/api-map")

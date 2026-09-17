@@ -1,0 +1,11 @@
+[Unit]
+Description=Проверка доступности выбора модели в Arena AI каждые 15 минут
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Unit=arena-model-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -28,6 +28,13 @@ MCP-сервер для агентов с поддержкой MCP: `/opt/orches
 
 Экспорт архива: `/opt/orchestrator/.venv/bin/python /opt/orchestrator/arena_export/export_chats.py --skip-existing` (флаги `--limit`, `--chat-id`, `--force`, `--only-meta`, `--include-archived`); лог в `/opt/orchestrator/logs/`.
 
+Выбор модели: `GET /models` вернёт `{available:false, status:403}`, пока аккаунту
+не выдан A/B-флаг `agent-model-selector` (проверить флаг: `GET /flags?only=agent`).
+Доступ мониторит `arena-model-watch.timer` (каждые 15 минут, лог
+`logs/model_watch.log`, алерт в Telegram, список моделей —
+`data/arena/models_available.json`). Как только модели появятся — передавать
+`model_id` в `POST /chats`.
+
 Частые ошибки:
 
 Ходить в arena.ai прямым HTTP (`curl https://arena.ai/api/...`) — Cloudflare отдаёт 429/challenge. Все запросы обязаны идти через вкладку браузера, то есть через сервис или `arena_api.py`.

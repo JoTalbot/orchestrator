@@ -1,6 +1,6 @@
 # Карта API arena.ai (реверс-инжиниринг)
 
-Собрано автоматически `arena_agent/scan_api.py` 2026-09-17 08:54 из 88 JS-бандлов.
+Собрано автоматически `arena_agent/scan_api.py` 2026-09-17 09:22 из 88 JS-бандлов.
 
 Колонка «статус» — результат зондирования GET-запросом из вкладки браузера (`scan_api.py probe`): `200` работает, `400/422` маршрут есть, но нужны параметры, `401/403` нужен контекст/права, `404` — нет такого маршрута (или нужен другой метод).
 
@@ -19,7 +19,7 @@
 | POST | `/ai-proxy/realtime/v1/streams/{runId}/{streamId}/append` | manual |  | Дозапись в поток запуска. |
 | GET | `/api/billing/balance` | rpc | 200 (тело не публикуем: личные данные) | РАБОТАЕТ: {creditsRemaining, dailyFreeCredits, refreshedAt} — ежедневная квота 1 000 000 кредитов. |
 | GET | `/api/chat` | literal | 403 {"error":"Route not allowed"} |  |
-| GET | `/api/chat/agent-models` | rpc | 403 {"error":"Not allowed"} | 403 «Not allowed» даже из вкладки — вероятно нужен контекст страницы агента/права. |
+| GET | `/api/chat/agent-models` | rpc | 403 {"error":"Not allowed"} | 403 «Not allowed» (проверено с query/заголовками/POST). Список моделей {models:[{id:uuid,publicName,displayName}]} для селектора модели в /agent; селектор закрыт A/B-флагом `agent-model-selector`, которого нет в posthogFlags аккаунта. Поле modelId в create-chat при этом валидируется как UUID. Мониторинг: arena_service/model_watch.py. |
 | POST | `/api/chat/trigger-session` | rpc | 403 {"error":"Route not allowed"} | Старт/пересоздание Trigger.dev-сессии: {"sessionId", "timezone"}. GET отдаёт 403 — только POST. |
 | POST | `/api/chat/trigger-token` | rpc | 403 {"error":"Route not allowed"} | РАБОТАЕТ (17.09.2026): тело {"sessionId": "<chat_id>"} → {"token": "<publicAccessToken JWT>"}. Дешёвая замена чтению RSC-пейлоада. |
 | GET | `/api/chat/workspace/cas/user/{param}` | literal | 400 {"success":false,"error":{"issues":[{"code":"too_small","minimum":43,"type":"string","incl | Отдача загруженного пользователем файла по CAS-хешу (43 символа). |

@@ -637,6 +637,45 @@ class ArenaAPI:
                                % (r["status"], (r["body"] or "")[:200]))
         return json.loads(r["body"])["token"]
 
+    async def feature_flags(self, page="/agent"):
+        """Feature-флаги аккаунта из RSC-пейлоада страницы.
+
+        Флаги лежат в HTML как экранированный JSON в ключе `posthogFlags`
+        (PostHog отдаёт только назначенные аккаунту флаги; отсутствующий флаг
+        означает «выключен»). Нужны, чтобы понимать, включены ли эксперименты —
+        например `agent-model-selector` (выбор модели в Agent Mode).
+        """
+        r = await self.fetch("GET", page,
+                             headers={"accept": "text/html,application/xhtml+xml"})
+        html = (r["body"] or "").replace('\\"', '"')
+        i = -1
+        for key in ('"posthogFlags"', '"featureFlags"'):
+            i = html.find(key)
+            if i >= 0:
+                break
+        if i < 0:
+            return {}
+        j = html.find("{", i)
+        if j < 0:
+            return {}
+        depth, blob = 0, ""
+        for k in range(j, min(len(html), j + 30000)):
+            ch = html[k]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    blob = html[j:k + 1]
+                    break
+        blob = blob.replace('"$undefined"', "null")
+        blob = re.sub(r":\s*\$undefined", ": null", blob)
+        try:
+            return json.loads(blob)
+        except Exception as e:
+            self.log("  featureFlags не распарсились: %s" % str(e)[:80])
+            return {}
+
     async def trigger_session(self, chat_id, timezone="Europe/Kiev"):
         """Старт/пересоздание Trigger.dev-сессии чата (startSession в вебе)."""
         return await self.fetch("POST", "/api/chat/trigger-session",

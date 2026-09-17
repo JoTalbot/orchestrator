@@ -1,0 +1,15 @@
+[Unit]
+Description=Arena AI: мониторинг доступа к выбору модели (agent-model-selector)
+Documentation=file:///opt/orchestrator/docs/ARENA.md
+After=arena-api.service
+Wants=arena-api.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/orchestrator
+Environment=ARENA_API_URL=http://127.0.0.1:8790
+ExecStart=/opt/orchestrator/.venv/bin/python /opt/orchestrator/arena_service/model_watch.py --once --quiet-ok
+# код 1 = доступ открылся (это успех проверки, алерт уже отправлен)
+SuccessExitStatus=1
+TimeoutStartSec=300

@@ -37,7 +37,9 @@ curl -s -H "$H" "localhost:8790/chats/<id>?format=md" # разговор тек�
 | Метод и путь | Что делает |
 |---|---|
 | `GET /health` | состояние моста, аккаунт, прогресс экспорта |
-| `GET /me`, `/pulse`, `/balance`, `/models` | профиль, квота, кредиты, модели |
+| `GET /me`, `/pulse`, `/balance` | профиль, квота, кредиты |
+| `GET /models` | список моделей Agent Mode (`available:false`, пока флаг не выдан) |
+| `GET /flags?only=agent` | feature-флаги аккаунта (PostHog) |
 | `GET /chats?limit&cursor&source=live\|cache` | список чатов |
 | `GET /chats/search?q=` | поиск |
 | `GET /chats/{id}?format=json\|md\|light&source=auto\|live\|cache` | транскрипт |
@@ -138,6 +140,12 @@ arena_balance, arena_rename, arena_archive, arena_delete, arena_export, arena_ap
    просьбе пользователя; тесты записи делайте в новом чате.
 7. **Кредиты** тратятся на каждый ход агента: перед массовыми прогонами смотреть
    `GET /balance` (`creditsRemaining`) и `GET /pulse`.
-8. Если мост отвечает ошибками вкладки — перезапустить сервис:
+8. **Выбор модели** в Agent Mode закрыт флагом `agent-model-selector` (нам не
+   выдан): `GET /api/chat/agent-models` → 403. Поле `model_id` в `POST /chats`
+   существует и валидируется как UUID, но валидных id моделей взять негде.
+   Доступ мониторит `arena-model-watch.timer` (каждые 15 мин) — при включении
+   придёт уведомление в Telegram, а список моделей ляжет в
+   `data/arena/models_available.json`.
+9. Если мост отвечает ошибками вкладки — перезапустить сервис:
    `sudo systemctl restart arena-api`; если умер браузер —
    `sudo docker restart octopus-browser-chromium`.

@@ -7,9 +7,11 @@ ROOT=/opt/orchestrator
 UNIT=/etc/systemd/system/arena-api.service
 
 if [[ "${1:-}" == "--remove" ]]; then
-  sudo systemctl disable --now arena-api 2>/dev/null || true
-  sudo rm -f "$UNIT"; sudo systemctl daemon-reload
-  echo "arena-api снят"; exit 0
+  sudo systemctl disable --now arena-api arena-model-watch.timer 2>/dev/null || true
+  sudo rm -f "$UNIT" /etc/systemd/system/arena-model-watch.service \
+             /etc/systemd/system/arena-model-watch.timer
+  sudo systemctl daemon-reload
+  echo "arena-api и монитор сняты"; exit 0
 fi
 
 command -v curl >/dev/null || { echo "нужен curl"; exit 1; }
@@ -28,8 +30,11 @@ if ss -ltn 2>/dev/null | grep -q ":$PORT "; then
 fi
 
 sudo cp "$ROOT/arena_service/arena-api.service" "$UNIT"
+sudo cp "$ROOT/arena_service/arena-model-watch.service" /etc/systemd/system/
+sudo cp "$ROOT/arena_service/arena-model-watch.timer" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now arena-api
+sudo systemctl enable --now arena-model-watch.timer
 sleep 3
 sudo systemctl --no-pager --lines=5 status arena-api | head -12 || true
 
@@ -42,5 +47,8 @@ echo "проверка:"
 curl -s -H "X-API-Key: $TOKEN" http://127.0.0.1:8790/health | head -c 600 || true
 echo
 echo
+echo "монитор выбора модели: systemctl list-timers arena-model-watch.timer"
+echo "  разовая проверка:  $ROOT/.venv/bin/python $ROOT/arena_service/model_watch.py --once"
+echo "  тест алерта:       $ROOT/.venv/bin/python $ROOT/arena_service/model_watch.py --self-test"
 echo "swagger: http://127.0.0.1:8790/docs"
 echo "MCP:     $ROOT/arena_mcp/server.py"

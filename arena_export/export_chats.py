@@ -76,7 +76,7 @@ def save_json_atomic(path: Path, obj):
 def already_done(index_entry, data_dir: Path, force: bool, skip_existing: bool):
     """Уже сохранённый чат не перекачиваем.
 
-    Пропускаем, если файл есть, в нём есть сообщения и
+    Пропускаем, если файл есть, он цел и
       * он не старше, чем updatedAt из индекса (обычный режим), либо
       * задан --skip-existing (не трогать сохранённое вообще никогда).
     """
@@ -89,8 +89,10 @@ def already_done(index_entry, data_dir: Path, force: bool, skip_existing: bool):
         d = json.loads(p.read_text())
     except Exception:
         return False                      # битый файл — перекачаем
-    if not d.get("messages"):
-        return False
+    if not d.get("id"):
+        return False                      # файл не наш — перекачаем
+    # сообщений может legitimately не быть (картиночные/пустые чаты) —
+    # файл пишется атомарно после успешной загрузки, значит чат сохранён
     if skip_existing:
         return True
     return d.get("updatedAt") == index_entry.get("updatedAt")

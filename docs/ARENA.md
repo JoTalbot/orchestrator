@@ -113,7 +113,9 @@ curl -s -H "$H" localhost:8790/health
 | Метод и путь | Что делает |
 |---|---|
 | `GET /health` | состояние моста: жива ли вкладка, аккаунт, сколько чатов в индексе/скачано, идёт ли экспорт |
-| `GET /me` `/pulse` `/balance` `/models` | профиль, квота, кредиты (`creditsRemaining`), список моделей |
+| `GET /me` `/pulse` `/balance` | профиль, квота, кредиты (`creditsRemaining`) |
+| `GET /models` | список моделей Agent Mode: `{available, status, models, error}` (пока `available:false`, см. раздел 11) |
+| `GET /flags?only=agent` | feature-флаги аккаунта из `posthogFlags` страницы `/agent` |
 | `GET /api-map` | карта всех 116 эндпоинтов арены |
 | `GET /chats?limit&cursor&include_archived&type&source=live\|cache` | список чатов |
 | `GET /chats/search?q&limit` | поиск по чатам |
@@ -255,3 +257,81 @@ tail -f /opt/orchestrator/logs/arena_export_*.log
 Сессия арены живёт в профиле контейнера; при её истечении нужно заново
 залогиниться в `https://arena.ai` внутри `octopus-browser-chromium`
 (веб-интерфейс контейнера: `http://127.0.0.1:6080`).
+
+
+## 11. Выбор модели в Agent Mode и мониторинг флага
+
+**Коротко: выбрать модель пока нельзя — функция закрыта A/B-флагом, который нашему
+аккаунту не назначен.** Ниже — что именно проверено (17.09.2026).
+
+Единственный «модельный» маршрут арены — `GET /api/chat/agent-models`:
+
+```js
+// схема ответа из бандла app/[locale]/app/agent/page-*.js
+{models: [{id: <uuid>, publicName: string, displayName: string|null}]}
+```
+
+Он кормит селектор модели в композере, который рендерится только при флаге
+`agent-model-selector`; туда же уходит `modelId` в теле `create-chat`:
+
+```js
+ev = flag("agent-model-selector") === true
+POST /nextjs-api/stream/create-chat
+  {..., ...(ev && selected ? {modelId: selected} : {}),
+        ...(harnessExperiment ? {harnessId} : {})}
+```
+
+Проверка на живом аккаунте:
+
+| Что | Результат |
+|---|---|
+| `GET /api/chat/agent-models` | `403 {"error":"Not allowed"}` |
+| то же + `?productMode=agentic`, + `referer: /agent`, + `x-arena-product-mode` | `403 Not allowed` |
+| `POST /api/chat/agent-models` | `403 Route not allowed` |
+| `/api/model`, `/api/models`, `/api/chat/models`, `/api/leaderboard*` | `403 Route not allowed` (маршрутов нет) |
+| `agent-model-selector` в `posthogFlags` страницы `/agent` | ключ отсутствует (флаг не назначен) |
+| `modelId` в `create-chat` | поле принимается, валидируется как UUID: на мусор — `400 ZodError: Invalid uuid, path: ["modelId"]` |
+| `modelId`/`modelName`/`harnessId` в 403 выгруженных транскриптах | не встречаются — агент не фиксирует модель |
+| `/leaderboard/agent` (1.75 МБ RSC) | только имена моделей (`Claude Fable 5.1 (Max)`, `GPT 6 Astra (Max)`, `Gemini 3.8 Flash (High)`, `Grok 4.5`), внутренних id нет |
+
+Флаги аккаунта целиком видны через `GET /flags` (ключ RSC — `posthogFlags`,
+PostHog отдаёт только назначенные флаги, `$undefined` → `null`). Наши
+`agent-*`: `agent-leaderboard: true`, `agent-pareto: true`,
+`agent-mode-workspace-storage: true`, `agentic-dlp-pii-detection: "treatment-1"`,
+`agent-harness-randomization: null`, `agent-mode-connectors: null`,
+`agentic-custom-feedback: null`, `agentic-arena-feedback: null`.
+
+### Монитор `arena-model-watch`
+
+Как только арена выдаст флаг (или маршрут начнёт отвечать 200), монитор сообщит
+об этом в Telegram и сохранит список моделей — чтобы сразу можно было передавать
+`model_id` при создании чата.
+
+```bash
+systemctl list-timers arena-model-watch.timer          # каждые 15 минут
+sudo journalctl -u arena-model-watch.service -n 20
+tail -f logs/model_watch.log
+
+.venv/bin/python arena_service/model_watch.py --once       # одна проверка
+.venv/bin/python arena_service/model_watch.py --loop 900   # цикл в foreground
+.venv/bin/python arena_service/model_watch.py --self-test  # имитация срабатывания
+.venv/bin/python arena_service/model_watch.py --send-test  # проверка доставки
+```
+
+Монитор ходит **через REST-сервис** (`GET /models`, `GET /flags`), поэтому не
+спорит с ним за вкладку браузера. Алерт срабатывает на переходе
+«недоступно → доступно» (и обратно — как предупреждение); повторных
+уведомлений нет, состояние хранится в `data/arena/model_watch.json`
+(история последних 200 замеров), список моделей — в `data/arena/models_available.json`.
+Доставка — теми же реквизитами, что и алерты Hermes:
+`/etc/hermes/telegram.env` + `/etc/hermes/telegram.chats.json` (читаются через
+`sudo`, либо задаются переменными `ARENA_WATCH_TELEGRAM_TOKEN` /
+`ARENA_WATCH_TELEGRAM_CHAT` / `ARENA_WATCH_WEBHOOK`).
+
+Когда доступ появится, создать чат конкретной моделью можно так:
+
+```bash
+curl -s -H "X-API-Key: $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"text":"задача","model_id":"<id из /models>","wait":true}' \
+     localhost:8790/chats
+```

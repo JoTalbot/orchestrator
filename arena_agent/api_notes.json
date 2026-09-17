@@ -1,7 +1,7 @@
 {
  "POST /api/chat/trigger-token": "РАБОТАЕТ (17.09.2026): тело {\"sessionId\": \"<chat_id>\"} → {\"token\": \"<publicAccessToken JWT>\"}. Дешёвая замена чтению RSC-пейлоада.",
  "POST /api/chat/trigger-session": "Старт/пересоздание Trigger.dev-сессии: {\"sessionId\", \"timezone\"}. GET отдаёт 403 — только POST.",
- "GET /api/chat/agent-models": "403 «Not allowed» даже из вкладки — вероятно нужен контекст страницы агента/права.",
+ "GET /api/chat/agent-models": "403 «Not allowed» (проверено с query/заголовками/POST). Список моделей {models:[{id:uuid,publicName,displayName}]} для селектора модели в /agent; селектор закрыт A/B-флагом `agent-model-selector`, которого нет в posthogFlags аккаунта. Поле modelId в create-chat при этом валидируется как UUID. Мониторинг: arena_service/model_watch.py.",
  "GET /api/history/unified": "РАБОТАЕТ: список чатов, query cursor/limit(≤50)/includeArchived/type=agentic → {entries[], nextCursor, total}.",
  "GET /api/history/search": "РАБОТАЕТ: поиск по чатам, query q/limit/includeArchived.",
  "PATCH /api/history/agentic/{id}": "РАБОТАЕТ: {\"title\": \"...\"} → {type,id,title}. Заголовок с переводами строк/управляющими символами → 400.",
@@ -29,5 +29,6 @@
  "GET /ai-proxy/realtime/v1/batches/{batchId}": "Состояние батча запусков.",
  "GET /ai-proxy/realtime/v1/streams/{runId}/{streamId}": "Поток запуска.",
  "POST /ai-proxy/realtime/v1/streams/{runId}/{streamId}/append": "Дозапись в поток запуска.",
- "GET /agent/{id}": "HTML страницы чата: внутри RSC-пейлоад (self.__next_f.push) с транскриптом, session.publicAccessToken и курсором пагинации."
+ "GET /agent/{id}": "HTML страницы чата: внутри RSC-пейлоад (self.__next_f.push) с транскриптом, session.publicAccessToken и курсором пагинации.",
+ "GET /agent": "HTML страницы: внутри RSC-пейлоад (self.__next_f.push) с транскриптом, session.publicAccessToken, курсором пагинации и posthogFlags (feature-флаги аккаунта)."
 }

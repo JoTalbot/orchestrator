@@ -239,6 +239,41 @@ async def flags(x_api_key: Optional[str] = Header(None),
                              bool(f.get("agent-model-selector"))}
 
 
+@app.get("/models/catalog")
+async def models_catalog(only: Optional[str] = Query(None,
+                       help="фильтр по подстроке в publicName/organization"),
+        selectable: Optional[bool] = Query(None),
+        limit: int = Query(100, le=2000),
+        x_api_key: Optional[str] = Header(None)):
+    """Каталог моделей arena.ai (1074 записи) — выгружен из `initialModels`
+    в RSC страницы /leaderboard/agent, где модели лежат вместе с внутренними UUID.
+
+    Важно: эти id — из каталога батл-режимов (модальности chat/webdev/image/
+    search/video). Агент-режим отдаёт свой список через /api/chat/agent-models,
+    который закрыт флагом agent-model-selector (403), и передача modelId в
+    create-chat тоже запрещена (403 Not allowed) — см. docs/ARENA.md, раздел 11.
+    """
+    check_auth(x_api_key)
+    p = DATA_DIR / "models_catalog.json"
+    if not p.exists():
+        raise HTTPException(404, "models_catalog.json нет — запустите dump_models")
+    d = json.loads(p.read_text())
+    ms = d.get("models") or []
+    if only:
+        o = only.lower()
+        ms = [m for m in ms if o in (m.get("publicName") or "").lower()
+              or o in (m.get("organization") or "").lower()
+              or o in (m.get("displayName") or "").lower()]
+    if selectable is not None:
+        ms = [m for m in ms if bool(m.get("userSelectable")) is selectable]
+    return {"source": d.get("source"), "savedAt": d.get("savedAt"),
+            "totalInCatalog": len(d.get("models") or []), "count": len(ms[:limit]),
+            "models": [{k: m.get(k) for k in
+                        ("id", "publicName", "displayName", "organization",
+                         "provider", "userSelectable", "rank")} | 
+                       {"capabilities": m.get("capabilities")} for m in ms[:limit]]}
+
+
 @app.get("/api-map")
 async def api_map(x_api_key: Optional[str] = Header(None)):
     """Карта всех найденных эндпоинтов arena.ai (scan_api.py)."""

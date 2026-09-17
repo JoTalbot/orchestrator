@@ -30,7 +30,12 @@ MCP-сервер для агентов с поддержкой MCP: `/opt/orches
 
 Выбор модели: `GET /models` вернёт `{available:false, status:403}`, пока аккаунту
 не выдан A/B-флаг `agent-model-selector` (проверить флаг: `GET /flags?only=agent`).
-Доступ мониторит `arena-model-watch.timer` (каждые 15 минут, лог
+Проверено записью: `create-chat` с валидным `modelId` из каталога отвечает
+403 «Not allowed» (чат не создаётся), без `modelId` — 200; то есть выбрать
+модель нельзя даже зная UUID. Каталог всех моделей площадки (1074 записи:
+UUID, организация, провайдер, возможности, userSelectable, ранги) —
+`data/arena/models_catalog.json`, REST `GET /models/catalog?only=…&selectable=true`,
+пересборка `python arena_agent/dump_models.py`. Доступ мониторит `arena-model-watch.timer` (каждые 15 минут, лог
 `logs/model_watch.log`, алерт в Telegram, список моделей —
 `data/arena/models_available.json`). Как только модели появятся — передавать
 `model_id` в `POST /chats`.
@@ -48,5 +53,8 @@ MCP-сервер для агентов с поддержкой MCP: `/opt/orches
 Переименовывать чат заголовком с переводами строк — сервер отвечает 400 «Title must not contain control characters» (клиент чистит их сам, но текст меняется).
 
 Читать SSE-поток без `last_event_id` — арена отдаёт всю историю записей сессии, а не только новые события.
+
+Создавать чаты пачкой: 3–4 `create-chat` за минуту дают challenge Cloudflare
+(429 «Just a moment…») — между созданиями нужна пауза около минуты.
 
 Ломать чужие чаты: `DELETE /chats/{id}` и `archive` применять только по явной просьбе пользователя, а тесты записи проводить в новом чате.

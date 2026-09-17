@@ -39,6 +39,7 @@ curl -s -H "$H" "localhost:8790/chats/<id>?format=md" # разговор тек�
 | `GET /health` | состояние моста, аккаунт, прогресс экспорта |
 | `GET /me`, `/pulse`, `/balance` | профиль, квота, кредиты |
 | `GET /models` | список моделей Agent Mode (`available:false`, пока флаг не выдан) |
+| `GET /models/catalog?only&selectable&limit` | каталог всех моделей площадки (1074 записи, UUID) |
 | `GET /flags?only=agent` | feature-флаги аккаунта (PostHog) |
 | `GET /chats?limit&cursor&source=live\|cache` | список чатов |
 | `GET /chats/search?q=` | поиск |
@@ -143,9 +144,18 @@ arena_balance, arena_rename, arena_archive, arena_delete, arena_export, arena_ap
 8. **Выбор модели** в Agent Mode закрыт флагом `agent-model-selector` (нам не
    выдан): `GET /api/chat/agent-models` → 403. Поле `model_id` в `POST /chats`
    существует и валидируется как UUID, но валидных id моделей взять негде.
+   Проверено записью: `create-chat` с валидным `modelId` из каталога даёт
+   **403 «Not allowed»** (чат не создаётся), без `modelId` — 200. То есть
+   выбрать модель пока нельзя даже зная UUID.
+   Каталог всех моделей площадки (1074 записи, UUID + организация + возможности)
+   лежит в `data/arena/models_catalog.json` и отдаётся через
+   `GET /models/catalog?only=claude&selectable=true` (пересборка —
+   `python arena_agent/dump_models.py`).
    Доступ мониторит `arena-model-watch.timer` (каждые 15 мин) — при включении
    придёт уведомление в Telegram, а список моделей ляжет в
    `data/arena/models_available.json`.
+10. Не создавать чаты пачкой: 3–4 `create-chat` за минуту ловят challenge
+   Cloudflare (429 «Just a moment…») — нужна пауза ~минуту.
 9. Если мост отвечает ошибками вкладки — перезапустить сервис:
    `sudo systemctl restart arena-api`; если умер браузер —
    `sudo docker restart octopus-browser-chromium`.

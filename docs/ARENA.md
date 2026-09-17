@@ -115,6 +115,7 @@ curl -s -H "$H" localhost:8790/health
 | `GET /health` | состояние моста: жива ли вкладка, аккаунт, сколько чатов в индексе/скачано, идёт ли экспорт |
 | `GET /me` `/pulse` `/balance` | профиль, квота, кредиты (`creditsRemaining`) |
 | `GET /models` | список моделей Agent Mode: `{available, status, models, error}` (пока `available:false`, см. раздел 11) |
+| `GET /models/catalog?only&selectable&limit` | каталог всех моделей площадки (1074 записи с UUID) из `initialModels` лидерборда |
 | `GET /flags?only=agent` | feature-флаги аккаунта из `posthogFlags` страницы `/agent` |
 | `GET /api-map` | карта всех 116 эндпоинтов арены |
 | `GET /chats?limit&cursor&include_archived&type&source=live\|cache` | список чатов |
@@ -293,6 +294,60 @@ POST /nextjs-api/stream/create-chat
 | `modelId` в `create-chat` | поле принимается, валидируется как UUID: на мусор — `400 ZodError: Invalid uuid, path: ["modelId"]` |
 | `modelId`/`modelName`/`harnessId` в 403 выгруженных транскриптах | не встречаются — агент не фиксирует модель |
 | `/leaderboard/agent` (1.75 МБ RSC) | только имена моделей (`Claude Fable 5.1 (Max)`, `GPT 6 Astra (Max)`, `Gemini 3.8 Flash (High)`, `Grok 4.5`), внутренних id нет |
+
+### Каталог моделей (найден 17.09.2026)
+
+В RSC-пейлоаде страницы `/leaderboard/agent` лежит массив **`initialModels`** —
+полный реестр моделей площадки вместе с внутренними UUID:
+
+```json
+{"id":"019c6d29-a30c-7e20-9bd0-6650af926623","organization":"anthropic",
+ "provider":"…","publicName":"claude-sonnet-4-6","name":"claude-sonnet-4-6",
+ "displayName":"claude-sonnet-4-6",
+ "capabilities":{"inputCapabilities":{"text":true,"image":true,"file":true},
+                 "outputCapabilities":{"text":true,"web":true}},
+ "userSelectable":true,"rank":2,"rankByModality":{"chat":3,"webdev":31}}
+```
+
+**1074 записи**, `userSelectable: true` у 948; организации: openai (82),
+google (72), alibaba (61), anthropic (39), xai (24), minimax (19), wan (16),
+bytedance (13), meta (12), moonshot (11), mistral (9) и ещё ~616 без указания.
+Модальности в `rankByModality`: `chat`, `webdev`, `image`, `search`, `video`
+— отдельной модальности `agent` там нет, то есть это каталог батл-режимов.
+
+Выгрузка и доступ:
+
+```bash
+.venv/bin/python arena_agent/dump_models.py            # → data/arena/models_catalog.json
+curl -s -H "X-API-Key: $TOKEN" "localhost:8790/models/catalog?only=claude&selectable=true"
+curl -s -H "X-API-Key: $TOKEN" "localhost:8790/models/catalog?only=openai&limit=200"
+```
+
+Топ таблицы лидерборда агентов (46 позиций, это то, что реально воюет в Agent
+Mode): Claude Fable 5.1 (Max), GPT 6 Astra (Max), Claude Opus 5 (High/Max),
+Claude Fable 5 (High), Claude Opus 4.8 (High), GPT 5.6 Sol (xHigh), Kimi K3 (Max),
+Claude Sonnet 5 (High), GPT 5.5 (xHigh), Hy4 preview, DeepSeek V4.1 Flash (Max),
+Gemini 3.8 Flash (High), GLM 5.2/5.3 (Max), Muse Spark 1.3 (Max), Qwen3.8 Max,
+Grok 4.5 / 4.6 (xHigh), Minimax M3, Mistral Medium 3.5, Solar Pro 4 и др.
+
+### Проверка: можно ли выбрать модель (тест записью)
+
+`POST /nextjs-api/stream/create-chat` с `modelId` из каталога:
+
+| modelId | Ответ арены |
+|---|---|
+| `019c6d29-…` (claude-sonnet-4-6, anthropic) | **403 `{"error":"Not allowed"}`** — чат не создан |
+| `019e71ea-…` (gpt-5.5-instant, openai) | **403 `{"error":"Not allowed"}`** — чат не создан |
+| `not-a-uuid` | 400 `ZodError: Invalid uuid, path: ["modelId"]` |
+| без `modelId` | 200, чат создаётся, агент отвечает |
+
+Вывод: поле существует и валидируется, но доступ к выбору модели закрыт на
+стороне сервера тем же флагом `agent-model-selector`. Знание валидных UUID не
+помогает — нужна выдача флага на аккаунт. За этим следит `arena-model-watch`.
+
+Побочное наблюдение: несколько `create-chat` подряд (3–4 за минуту) приводят к
+challenge Cloudflare (`429 Just a moment...`) — между созданиями чатов нужна
+пауза порядка минуты.
 
 Флаги аккаунта целиком видны через `GET /flags` (ключ RSC — `posthogFlags`,
 PostHog отдаёт только назначенные флаги, `$undefined` → `null`). Наши

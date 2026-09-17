@@ -235,6 +235,7 @@ class ArenaEngine:
         self._last_ts = 0.0
         self._hits = collections.deque()
         self.cooldown_until = 0.0
+        self.recaptcha_streak = 0   # подряд идущие отказы reCAPTCHA
         self.counters = collections.Counter()
         self.unknown_codes = collections.Counter()
         self.last_success = None
@@ -257,6 +258,7 @@ class ArenaEngine:
             d = json.load(open(self.cfg.STATE))
         except Exception:
             return
+        self.recaptcha_streak = int(d.get("recaptcha_streak") or 0)
         cu = float(d.get("cooldown_until") or 0)
         if cu > time.time():
             self.cooldown_until = cu
@@ -276,6 +278,7 @@ class ArenaEngine:
         try:
             os.makedirs(os.path.dirname(self.cfg.STATE), exist_ok=True)
             json.dump({"cooldown_until": self.cooldown_until, "interval": self.interval,
+                       "recaptcha_streak": self.recaptcha_streak,
                        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                        "counters": dict(self.counters)},
                       open(self.cfg.STATE, "w"), ensure_ascii=False, indent=1)
@@ -395,10 +398,19 @@ class ArenaEngine:
             self._close_tab(self.target_id)
 
     # ------------------------------------------------------------ темп/кулдаун
-    def _slow_down(self, reason, penalty=None):
-        """Отказ арены → увеличиваем интервал и (опционально) уходим в штрафной кулдаун."""
+    def _slow_down(self, reason, penalty=None, escalate=False):
+        """Отказ арены → увеличиваем интервал и (опционально) уходим в штрафной кулдаун.
+
+        escalate=True: штраф удваивается за каждой неудачей подряд (до PENALTY_MAX) —
+        флаг reCAPTCHA на аккаунте живёт дольше, чем одиночный штрафной кулдаун,
+        и регулярные ретраи лишь продлевают его.
+        """
         self.interval = min(self.cfg.MAX_INTERVAL,
                             max(self.interval * self.cfg.BACKOFF_FACTOR, 60))
+        penalty = float(penalty or 0)
+        if penalty and escalate and self.cfg.PENALTY_ESCALATE and self.recaptcha_streak > 1:
+            penalty = min(self.cfg.PENALTY_MAX,
+                          penalty * (2 ** (self.recaptcha_streak - 1)))
         if penalty:
             until = time.time() + penalty
             if until > self.cooldown_until:
@@ -407,10 +419,38 @@ class ArenaEngine:
                     int(self.interval), reason,
                     max(0, int(self.cooldown_until - time.time())))
         self._save_state(force=True)
+        return int(penalty)
 
     def _speed_up(self):
+        self.recaptcha_streak = 0
         self.interval = max(self.cfg.MIN_INTERVAL, self.interval * self.cfg.RECOVER_FACTOR)
         self._save_state()
+
+    def pause(self, seconds, reset_interval=False):
+        """Ручное управление кулдауном.
+
+        seconds > 0 — «тихий режим»: шлюз не ходит в арену и отвечает 503 + Retry-After.
+        seconds == 0 — снять кулдаун (и обнулить счётчик неудач подряд).
+        reset_interval — вернуть адаптивный интервал к MIN_INTERVAL.
+        """
+        seconds = float(seconds or 0)
+        if seconds > 0:
+            self.cooldown_until = max(self.cooldown_until, time.time() + seconds)
+            log.warning("ручная пауза %d с (до %s)", int(seconds),
+                        time.strftime("%H:%M:%S UTC", time.gmtime(self.cooldown_until)))
+        else:
+            self.cooldown_until = 0.0
+            self.recaptcha_streak = 0
+            log.warning("пауза снята вручную")
+        if reset_interval:
+            self.interval = self.cfg.MIN_INTERVAL
+        self._save_state(force=True)
+        return {"cooldown_remaining_s": max(0, int(self.cooldown_until - time.time())),
+                "paused_until_utc": time.strftime("%H:%M:%S", time.gmtime(self.cooldown_until))
+                if self.cooldown_until > time.time() else None,
+                "adaptive_interval_s": int(self.interval),
+            "recaptcha_streak": self.recaptcha_streak,
+                "recaptcha_streak": self.recaptcha_streak}
 
     def _note_cooldown(self, retry_after):
         try:
@@ -719,12 +759,14 @@ class ArenaEngine:
                     log.warning("recaptcha v3 отклонена → эскалация к v2")
                     attempt_v2 = True
                     continue
-                self._slow_down("recaptcha 403", self.cfg.RECAPTCHA_PENALTY)
+                self.recaptcha_streak += 1
+                pen = self._slow_down("recaptcha 403, неудач подряд: %d"
+                                      % self.recaptcha_streak,
+                                      self.cfg.RECAPTCHA_PENALTY, escalate=True)
                 raise ArenaError(403, "recaptcha",
                                  "reCAPTCHA отклонила запрос (аккаунт временно помечен; "
-                                 "шлюз ушёл в кулдаун на %d с): %s"
-                                 % (int(self.cfg.RECAPTCHA_PENALTY), raw_body),
-                                 retry_after=int(self.cfg.RECAPTCHA_PENALTY))
+                                 "шлюз ушёл в кулдаун на %d с): %s" % (pen, raw_body),
+                                 retry_after=pen)
             if http_status == 429 and "prompt failed" in str(raw_body).lower():
                 self.counters["prompt_failed"] += 1
                 self._slow_down("429 prompt failed")
@@ -803,6 +845,8 @@ class ArenaEngine:
              "uptime_s": int(time.time() - self.started_at),
              "cooldown_remaining_s": max(0, int(self.cooldown_until - time.time())),
              "adaptive_interval_s": int(self.interval),
+             "recaptcha_streak": self.recaptcha_streak,
+             "paused": self.cooldown_until > time.time(),
              "queue": {"concurrency": self.cfg.MAX_CONCURRENCY,
                        "hits_in_window": len(self._hits),
                        "window_s": int(self.cfg.BURST_WINDOW),

@@ -387,6 +387,24 @@ async def _complete(request: Request, body, legacy=False):
     return JSONResponse(out)
 
 
+# ------------------------------------------------------------------ пауза
+@app.post("/v1/arena/pause")
+async def arena_pause(request: Request):
+    """Ручной «тихий режим»: {"seconds": 3600} — не ходить в арену час.
+
+    {"seconds": 0} — снять кулдаун; {"reset_interval": true} — вернуть темп к
+    ARENA_GW_MIN_INTERVAL. Нужно, чтобы дать флагу reCAPTCHA спасть: каждая
+    попытка во время флага продлевает его.
+    """
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return engine.pause(float(body.get("seconds") or 0),
+                        reset_interval=bool(body.get("reset_interval")))
+
+
 # ------------------------------------------------------------------ пробник
 @app.post("/v1/arena/probe")
 async def probe(request: Request):

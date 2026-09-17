@@ -62,6 +62,10 @@ RETRIES_PROMPT_FAILED = _i("ARENA_GW_RETRY_PROMPT", 1)
 # адаптивный темп: после отказа reCAPTCHA/лимита интервал растёт, после успеха — падает
 MAX_INTERVAL = _f("ARENA_GW_MAX_INTERVAL", 900)
 RECAPTCHA_PENALTY = _f("ARENA_GW_PENALTY", 1200)   # штрафной кулдаун после 403 recaptcha
+# каждая следующая неудача подряд удваивает штраф (флаг аккаунта держится дольше,
+# чем 20 мин): 1200 → 2400 → 4800 → PENALTY_MAX
+PENALTY_ESCALATE = _b("ARENA_GW_PENALTY_ESCALATE", True)
+PENALTY_MAX = _f("ARENA_GW_PENALTY_MAX", 7200)
 BACKOFF_FACTOR = _f("ARENA_GW_BACKOFF", 2.0)
 RECOVER_FACTOR = _f("ARENA_GW_RECOVER", 0.9)
 

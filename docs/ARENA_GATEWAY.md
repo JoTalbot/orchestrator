@@ -66,10 +66,35 @@ Cursor / SDK / Hermes
 | GET | `/health`, `/v1/health` | состояние; `?deep=true` — проверка вкладки и reCAPTCHA |
 | GET | `/v1/arena/status` | диагностика: очередь, кулдаун, счётчики, неизвестные коды потока, пробник |
 | POST | `/v1/arena/probe` | фоновая проверка доступности моделей `{"limit":8,"modality":"chat","models":["…"]}` |
+| POST | `/v1/arena/pause` | «тихий режим»: `{"seconds":3600}` — не ходить в арену; `{"seconds":0,"reset_interval":true}` — снять кулдаун и вернуть темп |
 | DELETE | `/v1/arena/chats/{id}` | вручную закрыть чат арены |
 
 Локальные запросы с `127.0.0.1` токена не требуют (`ARENA_GW_LOCAL_NOAUTH=1`);
 для внешних — `Authorization: Bearer <токен>`.
+
+### Тихий режим (`/v1/arena/pause`)
+
+Флаг reCAPTCHA ставится на аккаунт и держится десятки минут, а **каждая попытка во
+время флага продлевает его**. Поэтому перед длительной паузой в работе шлюз полезно
+перевести в тихий режим — он отвечает 503 + `Retry-After` за ~5 мс, не обращаясь к арене
+(балансировщик AIOS при этом мгновенно уходит на фолбэк):
+
+```bash
+TOK=$(cat /opt/orchestrator/.secrets/arena_gateway_token.txt)
+# замолчать на час (например, на ночь или на время массовых задач Hermes)
+curl -s -X POST http://127.0.0.1:8791/v1/arena/pause -H "Authorization: Bearer $TOK" \
+  -H 'content-type: application/json' -d '{"seconds":3600}'
+# снять паузу и вернуть темп к минимуму
+curl -s -X POST http://127.0.0.1:8791/v1/arena/pause -H "Authorization: Bearer $TOK" \
+  -H 'content-type: application/json' -d '{"seconds":0,"reset_interval":true}'
+```
+
+Пауза сохраняется в `data/arena/gateway_state.json` и переживает рестарт сервиса.
+
+**Нарастающий штраф.** За каждым отказом reCAPTCHA подряд штрафной кулдаун удваивается:
+1200 → 2400 → 4800 → 7200 с (`ARENA_GW_PENALTY`, `ARENA_GW_PENALTY_MAX`,
+`ARENA_GW_PENALTY_ESCALATE`). Счётчик `recaptcha_streak` обнуляется первым же успехом;
+он виден в `/v1/arena/status` и `/health`.
 
 ### Расширения протокола (необязательные поля запроса)
 
@@ -233,6 +258,17 @@ curl -s http://127.0.0.1:9700/v1/chat/completions -H "Authorization: Bearer $SHI
   -H 'content-type: application/json' \
   -d '{"model":"hermes-arena","messages":[{"role":"user","content":"Скажи ОК"}]}'
 ```
+
+### Сквозная валидация
+
+```bash
+/opt/orchestrator/arena_gateway/validate.sh            # чат → поиск → стрим → картинки → статус
+/opt/orchestrator/arena_gateway/validate.sh --quick    # только чат + локальные вотчдоги
+/opt/orchestrator/arena_gateway/validate.sh --skip-images
+```
+
+Скрипт уважает адаптивный темп (ждёт окончания кулдауна вместо ретраев) и **прекращает
+работу при первом 403/429**, чтобы не продлевать флаг аккаунта.
 
 ## 6. Отладка без HTTP
 

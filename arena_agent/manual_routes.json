@@ -1,0 +1,13 @@
+[
+ {"method":"POST","path":"/ai-proxy/realtime/v1/sessions/{id}/in/append","kinds":["manual","fetch"],"probe":"200 — проверено записью (arena_api.send_message)"},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/sessions/{id}/out","kinds":["manual","fetch"],"probe":"200 SSE — проверено чтением потока (arena_api.stream_out)"},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/sessions/{id}/channels/{channel}","kinds":["manual"]},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/runs","kinds":["manual"]},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/runs/{runId}","kinds":["manual"]},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/batches/{batchId}","kinds":["manual"]},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/streams/{runId}/{streamId}","kinds":["manual"]},
+ {"method":"POST","path":"/ai-proxy/realtime/v1/streams/{runId}/{streamId}/append","kinds":["manual"]},
+ {"method":"GET","path":"/ai-proxy/realtime/v1/streams/{runId}/webdev-stream","kinds":["manual"]},
+ {"method":"GET","path":"/agent/{id}","kinds":["manual","page"],"probe":"200 — RSC-пейлоад с транскриптом и publicAccessToken"},
+ {"method":"GET","path":"/api/chat/{id}/workspace/{nodeId}/dir","kinds":["manual"],"probe":"200 — листинг каталога песочницы (?path=)"}
+]

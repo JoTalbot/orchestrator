@@ -96,35 +96,52 @@ orchestrator/
 - Сообщений суммарно: **47 554**; диапазон дат чатов: 2025-04-30 … 2026-09-13.
 - Объём: сырые данные `data/chats/` ≈ 470 МБ, выжимка `data/light/` ≈ 165 МБ.
 
-## Часть 3. Arena AI (Agent Mode) — чаты по API
+## Часть 3. Arena AI (Agent Mode) — доступ, API и выгрузка
 
-Модуль `arena_agent/` + `arena_export/`: чтение, выгрузка, создание чатов и
-отправка сообщений агенту Arena AI. Подробности — `arena_agent/README.md`.
+Полная документация — **`docs/ARENA.md`**, карта всех эндпоинтов арены —
+**`docs/ARENA_API.md`** (116 маршрутов), скилл для агентов —
+**`skills/arena-ai/SKILL.md`**.
 
-В отличие от ChatGPT, прямой HTTP к arena.ai с серверного IP не работает:
-Cloudflare отвечает `429 cf-mitigated: challenge`, а на действия стоит
-reCAPTCHA Enterprise. Поэтому запросы выполняет сама вкладка arena.ai в
-браузере (CDP `:9222`, контейнер `liza-browser`) через `fetch()` в контексте
-страницы — у неё правильные куки, TLS-отпечаток и доступ к `grecaptcha`.
+Публичного API у arena.ai нет: прямой HTTP с серверного IP получает
+`429 cf-mitigated: challenge` (Cloudflare), а действия защищены reCAPTCHA
+Enterprise. Поэтому запросы выполняет вкладка arena.ai в браузере
+(CDP `127.0.0.1:9222`, контейнер `octopus-browser-chromium`) через `fetch()`
+в контексте страницы.
 
-Проверено на живом аккаунте 17.09.2026 (в истории 407 чатов):
+```
+агенты / драйверы / внешние процессы
+        │
+        ├── REST 127.0.0.1:8790   arena_service/app.py   (systemd: arena-api)
+        ├── MCP  (stdio)          arena_mcp/server.py    (17 инструментов)
+        └── CLI                   arena_agent/arena_ctl.py
+                                        │
+                          arena_agent/arena_api.py  →  CDP → Chromium → arena.ai
+```
 
-- список чатов, поиск, транскрипт (включая tool-вызовы агента и их вывод),
-  файлы песочницы чата, баланс кредитов — работают;
-- создание чата: `POST /nextjs-api/stream/create-chat` + reCAPTCHA v3
-  (действие `agentic_chat_submit`) — работает, агент отвечает;
-- следующее сообщение: агент-режим ездит поверх Trigger.dev —
-  `POST /ai-proxy/realtime/v1/sessions/{id}/in/append` с `publicAccessToken`
-  сессии (обычный `POST /api/chat` даёт `403 Route not allowed`) — работает;
-- архив / разархив / удаление чата — работают.
+Что работает (проверено на живом аккаунте 17.09.2026, 407 чатов в истории):
+
+- чтение: список чатов, поиск, транскрипт с tool-вызовами, файлы песочницы,
+  баланс кредитов (`creditsRemaining`), живой SSE-поток ответа агента;
+- запись: создание чата (`POST /nextjs-api/stream/create-chat` + reCAPTCHA v3),
+  следующее сообщение (`POST /ai-proxy/realtime/v1/sessions/{id}/in/append`
+  с `publicAccessToken`), вложение файлов (загрузка в CAS + `metadata.uploads`),
+  остановка генерации, переименование, архив, удаление, отзывы;
+- выгрузка: `arena_export/export_chats.py` — возобновляемый экспорт всех чатов
+  в `data/arena/`; **уже сохранённые чаты не перекачиваются** (сверка по
+  `updatedAt`, флаги `--skip-existing` / `--force`, lock от параллельных запусков).
 
 ```bash
 cd /opt/orchestrator
-.venv/bin/python arena_agent/arena_ctl.py list                 # все чаты
-.venv/bin/python arena_agent/arena_ctl.py md <chat_id>         # транскрипт в MD
-.venv/bin/python arena_agent/arena_ctl.py create "задача" --wait
-.venv/bin/python arena_agent/arena_ctl.py send <chat_id> "Продолжай" --wait
-.venv/bin/python arena_export/export_chats.py --limit 5        # выгрузка чатов
+TOKEN=$(cat .secrets/arena_service_token.txt)
+curl -s -H "X-API-Key: $TOKEN" localhost:8790/health
+curl -s -H "X-API-Key: $TOKEN" "localhost:8790/chats?limit=10"
+curl -s -H "X-API-Key: $TOKEN" "localhost:8790/chats/<id>?format=md"
+curl -s -H "X-API-Key: $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"text":"задача","wait":true}' localhost:8790/chats
+
+.venv/bin/python arena_agent/arena_ctl.py list                 # то же из консоли
+.venv/bin/python arena_export/export_chats.py --skip-existing  # дозагрузка архива
+sudo systemctl status arena-api                                # сервис REST
 ```
 
 Выгруженные чаты лежат в `data/arena/` (в git не попадают): в них секреты в

@@ -221,7 +221,7 @@ class ArenaAPI:
             print(*a, flush=True)
 
     async def fetch(self, method, path, body=None, headers=None, timeout=180,
-                    retries=4):
+                    retries=4, body_b64=None):
         """→ {status, headers, body(text)}
 
         Cloudflare периодически кидает челлендж (429 + cf-mitigated: challenge,
@@ -230,7 +230,8 @@ class ArenaAPI:
         """
         for attempt in range(retries):
             try:
-                out = await self._fetch_once(method, path, body, headers, timeout)
+                out = await self._fetch_once(method, path, body, headers,
+                                             timeout, body_b64=body_b64)
             except TabLost as e:
                 self.log("  вкладка потеряна (%s) — переподключаюсь" % str(e)[:80])
                 await self.reconnect()
@@ -252,7 +253,7 @@ class ArenaAPI:
                 and "Just a moment" in body[:400])
 
     async def _fetch_once(self, method, path, body=None, headers=None,
-                          timeout=180):
+                          timeout=180, body_b64=None):
         """→ {status, headers, body(text)}
 
         Ответ страницы чата достигает 2+ МБ, а CDP returnByValue на таких
@@ -262,14 +263,26 @@ class ArenaAPI:
         cfg = {"method": method, "path": path,
                "headers": json.dumps(headers or {}),
                "body": body if isinstance(body, str) or body is None
-               else json.dumps(body, ensure_ascii=False)}
+               else json.dumps(body, ensure_ascii=False),
+               "bodyB64": body_b64}
         expr = """
 (async (cfg) => {
-  const init = {method: cfg.method, credentials: 'include', cache: 'no-store',
+  // для кросс-доменных (presigned R2/S3) запросов credentials ломает CORS:
+  // веб-клиент шлёт их без кук, поэтому и мы — 'omit'
+  let same = true;
+  try { same = new URL(cfg.path, location.origin).origin === location.origin; }
+  catch (e) { same = true; }
+  const init = {method: cfg.method, credentials: same ? 'include' : 'omit',
+                cache: 'no-store',
                 headers: Object.assign({'accept':'application/json, text/plain, */*',
                                         'cache-control':'no-cache'},
                                        JSON.parse(cfg.headers))};
-  if (cfg.body != null) {
+  if (cfg.bodyB64 != null) {
+    const bin = atob(cfg.bodyB64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    init.body = u8;
+  } else if (cfg.body != null) {
     init.body = cfg.body;
     if (!init.headers['content-type']) init.headers['content-type'] = 'application/json';
   }
@@ -486,6 +499,29 @@ class ArenaAPI:
 
     # ------------------------------------------------------------- запись
 
+    @staticmethod
+    def _split_files(files):
+        """Вложения → (части сообщения, метаданные uploads).
+
+        Веб-клиент делает именно так: file-частями становятся ТОЛЬКО картинки,
+        а все загрузки объявляются в message.metadata.uploads =
+        [{key, filename, mediaType, kind?}]. Без этих метаданных сервер отвечает
+        400 «File parts require validated upload metadata».
+        """
+        parts, uploads = [], []
+        for f in files or []:
+            mt = f.get("mediaType") or "application/octet-stream"
+            if mt.startswith("image/") and f.get("url"):
+                parts.append({"type": "file", "url": f["url"], "mediaType": mt,
+                              "filename": f.get("filename") or "image"})
+            up = {"key": f.get("key"), "filename": f.get("filename") or "file",
+                  "mediaType": mt}
+            if f.get("kind"):
+                up["kind"] = f["kind"]
+            if up["key"]:
+                uploads.append(up)
+        return parts, uploads
+
     async def create_chat(self, text, files=None, timezone="Europe/Kiev",
                           model_id=None, harness_id=None, connectors=None):
         """Новый чат Agent Mode. Возвращает {id: <session_id>}.
@@ -496,14 +532,15 @@ class ArenaAPI:
         rc = await self.recaptcha("agentic_chat_submit")
         if not rc.get("ok"):
             raise RuntimeError("reCAPTCHA не выдала токен: %s" % rc)
-        parts = []
-        for f in (files or []):
-            parts.append({"type": "file", "url": f["url"],
-                          "mediaType": f["mediaType"], "filename": f["filename"]})
+        file_parts, uploads = self._split_files(files)
+        parts = list(file_parts)
         if text:
             parts.append({"type": "text", "text": text})
+        msg = {"id": uuid7(), "role": "user", "parts": parts}
+        if uploads:
+            msg["metadata"] = {"manifestNodeId": None, "uploads": uploads}
         body = {
-            "message": {"id": uuid7(), "role": "user", "parts": parts},
+            "message": msg,
             "recaptchaV3Token": rc["token"],
             "timezone": timezone,
         }
@@ -524,7 +561,16 @@ class ArenaAPI:
             return {"raw": r["body"][:500]}
 
     async def session_token(self, chat_id, transcript=None):
-        """publicAccessToken сессии Trigger.dev — берётся из RSC-пейлоада чата."""
+        """publicAccessToken сессии Trigger.dev.
+
+        Сначала дешёвый POST /api/chat/trigger-token; если маршрут недоступен —
+        достаём токен из RSC-пейлоада страницы чата (2 МБ, зато всегда есть).
+        """
+        try:
+            return await self.trigger_token(chat_id), transcript
+        except Exception as e:
+            self.log("  trigger-token не сработал (%s) — беру токен из RSC"
+                     % str(e)[:90])
         tr = transcript or (await self.transcript_latest(chat_id))[0] or {}
         tok = (tr.get("session") or {}).get("publicAccessToken")
         if not tok:
@@ -556,14 +602,14 @@ class ArenaAPI:
             token, _ = await self.session_token(chat_id)
         rc = await self.recaptcha("chat_submit")
         mid = uuid7()
-        parts = []
-        for f in (files or []):
-            parts.append({"type": "file", "url": f["url"],
-                          "mediaType": f["mediaType"], "filename": f["filename"]})
+        file_parts, uploads = self._split_files(files)
+        parts = list(file_parts)
         parts.append({"type": "text", "text": text})
         meta = {"timezone": timezone, "submissionSource": "chat_input"}
-        msg = {"id": mid, "role": "user", "parts": parts,
-               "metadata": dict(meta, recaptchaV3Token=rc.get("token"))}
+        msg_meta = dict(meta, recaptchaV3Token=rc.get("token"))
+        if uploads:
+            msg_meta.update({"manifestNodeId": None, "uploads": uploads})
+        msg = {"id": mid, "role": "user", "parts": parts, "metadata": msg_meta}
         chunk = {"kind": "message",
                  "payload": {"message": msg, "chatId": chat_id,
                              "trigger": "submit-message", "messageId": mid,
@@ -575,6 +621,293 @@ class ArenaAPI:
         if token is None:
             token, _ = await self.session_token(chat_id)
         return await self.append_input(chat_id, {"kind": "stop"}, token)
+
+
+    # ------------------------------------------------- сессия Trigger.dev
+
+    async def trigger_token(self, chat_id):
+        """publicAccessToken сессии без чтения 2-мегабайтного RSC-пейлоада.
+
+        POST /api/chat/trigger-token {"sessionId": ...} → {"token": "..."}
+        """
+        r = await self.fetch("POST", "/api/chat/trigger-token",
+                             body={"sessionId": chat_id})
+        if r["status"] >= 400:
+            raise RuntimeError("trigger-token -> %s: %s"
+                               % (r["status"], (r["body"] or "")[:200]))
+        return json.loads(r["body"])["token"]
+
+    async def trigger_session(self, chat_id, timezone="Europe/Kiev"):
+        """Старт/пересоздание Trigger.dev-сессии чата (startSession в вебе)."""
+        return await self.fetch("POST", "/api/chat/trigger-session",
+                                body={"sessionId": chat_id, "timezone": timezone})
+
+    async def agent_models(self):
+        """Список моделей агент-режима: GET /api/chat/agent-models."""
+        return await self.fetch("GET", "/api/chat/agent-models")
+
+    # ------------------------------------------------------- управление
+
+    async def rename(self, chat_id, title, type="agentic"):
+        """PATCH /api/history/{type}/{id} {"title": ...}
+
+        Сервер не принимает управляющие символы и переводы строк в заголовке —
+        чистим их сами (иначе 400 «Title must not contain control characters»).
+        """
+        clean = re.sub(r"[\r\n\t]+", " ", str(title))
+        clean = re.sub(r"[\x00-\x1f\x7f]", "", clean).strip()[:200]
+        return await self.fetch("PATCH", "/api/history/%s/%s" % (type, chat_id),
+                                body={"title": clean})
+
+    async def feedback(self, chat_id, session_node_id, text):
+        """Отзыв на ответ агента (arena-feedback)."""
+        rc = await self.recaptcha("review_feedback")
+        return await self.fetch(
+            "POST", "/api/chat/%s/arena-feedback" % chat_id,
+            body={"sessionNodeId": session_node_id, "text": text,
+                  "recaptchaV3Token": rc.get("token")})
+
+    async def review_feedback(self, chat_id, session_node_id, action=None,
+                              feedback=None):
+        """Check-in («Yes/No», оценка выполнения) — review-feedback."""
+        rc = await self.recaptcha("review_feedback")
+        body = {"sessionNodeId": session_node_id,
+                "recaptchaV3Token": rc.get("token")}
+        if action is not None:
+            body["action"] = action
+        if feedback is not None:
+            body["feedback"] = feedback
+        return await self.fetch("POST", "/api/chat/%s/review-feedback" % chat_id,
+                                body=body)
+
+    # --------------------------------------------------------- файлы
+
+    async def upload(self, data, content_type="text/plain"):
+        """Загрузка файла в CAS агента.
+
+        1) hash = base64url(sha256(bytes)) без '=' (43 символа);
+        2) POST /api/storage/generate-agent-upload-url {hash, contentType, size}
+           → {uploadUrl, key};
+        3) PUT uploadUrl (тело — байты);
+        4) в сообщение файл попадает как
+           {"type":"file","url":"/api/chat/workspace/cas/user/<hash>",
+            "mediaType":..., "filename":...}.
+        """
+        import base64
+        import hashlib
+        if isinstance(data, str):
+            data = data.encode()
+        h = base64.urlsafe_b64encode(hashlib.sha256(data).digest()
+                                     ).decode().rstrip("=")
+        r = await self.fetch_json("POST", "/api/storage/generate-agent-upload-url",
+                                  {"hash": h, "contentType": content_type,
+                                   "size": len(data)})
+        upload_url, key = r["uploadUrl"], r["key"]
+        put = await self.fetch("PUT", upload_url, body_b64=base64.b64encode(data).decode(),
+                               headers={"content-type": content_type})
+        if put["status"] >= 400:
+            raise RuntimeError("PUT %s -> %s" % (upload_url[:60], put["status"]))
+        return {"hash": h, "key": key, "size": len(data),
+                "mediaType": content_type, "kind": None,
+                "url": "/api/chat/workspace/cas/user/" + h}
+
+    # --------------------------------------------------- живой поток (SSE)
+
+    async def stream_out(self, chat_id, token=None, max_seconds=90,
+                         last_event_id=None, max_bytes=400_000):
+        """Чтение выходного потока агента:
+        GET /ai-proxy/realtime/v1/sessions/{id}/out (SSE, Bearer publicAccessToken).
+
+        Возвращает список распарсенных событий (`data: {...}`): text-delta,
+        reasoning-delta, tool-input-delta, trigger:turn-complete и т.д.
+        """
+        if token is None:
+            token = await self.trigger_token(chat_id)
+        cfg = {"url": "%s/ai-proxy/realtime/v1/sessions/%s/out" % (ORIGIN, chat_id),
+               "token": token, "maxSeconds": max_seconds, "maxBytes": max_bytes,
+               "lastEventId": last_event_id}
+        expr = """
+(async (cfg) => {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), cfg.maxSeconds * 1000);
+  const headers = {accept: 'text/event-stream',
+                   Authorization: 'Bearer ' + cfg.token};
+  if (cfg.lastEventId) headers['Last-Event-ID'] = cfg.lastEventId;
+  let out = [], lastId = null;
+  try {
+    const r = await fetch(cfg.url, {headers, signal: ctl.signal,
+                                    credentials: 'include'});
+    if (!r.ok || !r.body) {
+      clearTimeout(t);
+      return JSON.stringify({status: r.status, events: [],
+                             error: (await r.text()).slice(0, 300)});
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', bytes = 0;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      buf += dec.decode(value, {stream: true});
+      let i;
+      while ((i = buf.indexOf('\\n\\n')) !== -1) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        for (const line of block.split('\\n')) {
+          if (line.startsWith('id:')) lastId = line.slice(3).trim();
+          else if (line.startsWith('data:')) {
+            const s = line.slice(5).trim();
+            if (!s) continue;
+            try { out.push(JSON.parse(s)); } catch (e) {}
+          }
+        }
+        if (bytes > cfg.maxBytes) break;
+      }
+      if (bytes > cfg.maxBytes) break;
+    }
+    try { reader.cancel(); } catch (e) {}
+    clearTimeout(t);
+    return JSON.stringify({status: 200, events: out, lastEventId: lastId,
+                           bytes});
+  } catch (e) {
+    clearTimeout(t);
+    // прерывание по нашему же таймауту — штатное завершение чтения
+    const aborted = (e && (e.name === 'AbortError' || /abort/i.test(String(e))));
+    return JSON.stringify({status: aborted ? 200 : 0, events: out,
+                           timeout: !!aborted, lastEventId: lastId,
+                           error: aborted ? null : String(e)});
+  }
+})(%s)
+""" % json.dumps(cfg)
+        raw = await self.tab.js(expr, timeout=max_seconds + 30)
+        return json.loads(raw or "{}")
+
+    @staticmethod
+    def flatten_stream(events):
+        """Поток приходит пачками {records:[{seq_num, body|headers}]} —
+        разворачиваем в плоский список событий UIMessage-стрима."""
+        out = []
+        for e in events or []:
+            if isinstance(e, dict) and "records" in e:
+                for r in e["records"]:
+                    body = r.get("body")
+                    if body:
+                        try:
+                            d = json.loads(body).get("data")
+                        except Exception:
+                            d = None
+                        if isinstance(d, dict):
+                            d = dict(d, _seq=r.get("seq_num"))
+                            out.append(d)
+                    else:
+                        hdr = dict(r.get("headers") or [])
+                        if hdr.get("trigger-control"):
+                            out.append({"type": "trigger-control",
+                                        "control": hdr["trigger-control"],
+                                        "_seq": r.get("seq_num")})
+            elif isinstance(e, dict):
+                out.append(e)
+        return out
+
+    @staticmethod
+    def stream_text(events):
+        """Текст ответа из событий потока (text-delta)."""
+        parts = []
+        for e in events or []:
+            if not isinstance(e, dict):
+                continue
+            t = e.get("type")
+            if t in ("text-delta", "text"):
+                parts.append(e.get("delta") or e.get("textDelta")
+                             or e.get("text") or "")
+        return "".join(parts)
+
+    @staticmethod
+    def stream_state(events):
+        """Сводка потока: текст, рассуждения, инструменты, завершён ли ход."""
+        ev = ArenaAPI.flatten_stream(events)
+        text, reasoning, tools = [], [], {}
+        turn_complete = finished = False
+        meta = {}
+        for e in ev:
+            t = e.get("type")
+            if t == "text-delta":
+                text.append(e.get("delta") or "")
+            elif t == "reasoning-delta":
+                reasoning.append(e.get("delta") or "")
+            elif t in ("tool-input-start", "tool-input-available", "tool"):
+                name = e.get("toolName") or e.get("tool") or "?"
+                st = tools.setdefault(name, {"toolName": name, "state": t})
+                if e.get("input") is not None:
+                    st["input"] = e.get("input")
+            elif t == "tool-output-available":
+                name = e.get("toolName") or "?"
+                tools.setdefault(name, {"toolName": name})["output"] = \
+                    str(e.get("output"))[:2000]
+                tools[name]["state"] = "output-available"
+            elif t == "finish":
+                finished = True
+                meta = e.get("messageMetadata") or {}
+            elif t == "trigger-control" and e.get("control") == "turn-complete":
+                turn_complete = True
+        return {"text": "".join(text), "reasoning": "".join(reasoning)[:4000],
+                "tools": list(tools.values()), "finished": finished,
+                "turnComplete": turn_complete, "messageMetadata": meta,
+                "events": ev}
+
+
+# ------------------------------------------------------------ ожидание ответа
+
+async def wait_idle(api, chat_id, timeout=600, interval=6, verbose=False,
+                    log=print, poll=None):
+    """Ждём завершения хода агента.
+
+    Признаки готовности: последнее сообщение — assistant, у него нет
+    metadata.pending, все части в финальном состоянии и размер не меняется
+    два опроса подряд. Возвращает последний прочитанный транскрипт.
+    """
+    t0, last_len, stable, tr = time.time(), -1, 0, {}
+    while time.time() - t0 < timeout:
+        # poll — своя функция чтения (нужна, когда доступ к браузеру надо
+        # захватывать/отпускать на каждом опросе, например в REST-сервисе)
+        tr = (await poll(chat_id)) if poll else \
+            (await api.transcript_latest(chat_id))[0] or {}
+        tr = tr or {}
+        msgs = tr.get("messages") or []
+        last = msgs[-1] if msgs else {}
+        size = len(json.dumps(last.get("parts"), ensure_ascii=False))
+        pending = bool((last.get("metadata") or {}).get("pending"))
+        unfinished = any(isinstance(p, dict)
+                         and p.get("state") not in (None, "done",
+                                                    "output-available",
+                                                    "output-error")
+                         for p in (last.get("parts") or []))
+        if verbose:
+            log("  %4d с | сообщений %d | последнее %s | %d байт | pending=%s"
+                % (time.time() - t0, len(msgs), last.get("role"), size, pending))
+        if (last.get("role") == "assistant" and not pending and not unfinished
+                and size == last_len):
+            stable += 1
+            if stable >= 1:
+                return tr
+        else:
+            stable = 0
+        last_len = size
+        await asyncio.sleep(interval)
+    return tr
+
+
+def transcript_text(tr, only_last=False):
+    """Текст ответа(ов) из транскрипта — удобно отдавать наружу."""
+    msgs = tr.get("messages") or []
+    if only_last:
+        msgs = msgs[-1:]
+    out = []
+    for m in msgs:
+        for p in m.get("parts") or []:
+            if isinstance(p, dict) and p.get("type") == "text":
+                out.append(p.get("text") or "")
+    return "\n".join(x for x in out if x)
 
 
 # ------------------------------------------------------------------- utils

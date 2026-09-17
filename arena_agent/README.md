@@ -19,7 +19,7 @@ TLS-отпечаток Chrome). С Arena так **не выходит**:
 Поэтому клиент делает запросы **внутри вкладки arena.ai** через CDP
 (`Runtime.evaluate` → `fetch`): у страницы правильные куки, origin,
 TLS-отпечаток и доступ к `grecaptcha.enterprise`. Браузер — тот же, что
-использует `agent_jo` (docker-контейнер `liza-browser`, CDP `:9222`).
+использует `agent_jo` (docker-контейнер `octopus-browser-chromium`, CDP `:9222`).
 
 ```
 arena_ctl.py / export_chats.py
@@ -205,3 +205,47 @@ export 5 чатов                            → 50 сообщений, 0 ош
   `cf_clearance`: по сути полный доступ к аккаунту.
 * Все токены, которые светились в чатах/переписке (SSH-ключ OCI, GitHub PAT
   `ghp_…`, Cloudflare), считаются скомпрометированными — их надо ротировать.
+
+
+## REST-сервис, MCP и полная карта API (добавлено 17.09.2026)
+
+Клиент `arena_api.py` теперь умеет больше, чем описано выше:
+
+| Метод | Что делает |
+|---|---|
+| `trigger_token(chat_id)` | `publicAccessToken` сессии одним запросом (`POST /api/chat/trigger-token {sessionId}`) — вместо чтения 2 МБ RSC |
+| `trigger_session(chat_id)` | старт Trigger.dev-сессии (`{sessionId, timezone}`) |
+| `rename(chat_id, title)` | `PATCH /api/history/agentic/{id}` (переводы строк чистятся сами) |
+| `upload(data, content_type)` | загрузка файла в CAS: `generate-agent-upload-url` → `PUT` → `{hash, key, url}` |
+| `stream_out(chat_id, ...)` | чтение SSE-потока `/ai-proxy/realtime/v1/sessions/{id}/out` |
+| `flatten_stream / stream_text / stream_state` | разбор событий потока в текст, рассуждения, инструменты, признак завершения хода |
+| `feedback / review_feedback` | отзыв и check-in по ответу агента |
+| `wait_idle(..., poll=)` | ожидание ответа; `poll` нужен REST-сервису, чтобы не держать блокировку браузера |
+
+Вложения в сообщение устроены неочевидно: **file-частями становятся только
+картинки**, а все загрузки объявляются в `message.metadata.uploads =
+[{key, filename, mediaType, kind?}]`. Без этих метаданных сервер отвечает
+`400 File parts require validated upload metadata`. Это реализовано в
+`_split_files()`.
+
+Над клиентом построены два слоя (подробности — `docs/ARENA.md`):
+
+- `arena_service/app.py` — REST на `127.0.0.1:8790` (systemd-юнит `arena-api`,
+  swagger `/docs`, токен в `.secrets/arena_service_token.txt`). Владеет вкладкой
+  браузера и сериализует обращения, поэтому наружу и другим агентам следует
+  ходить сюда, а не в CDP напрямую.
+- `arena_mcp/server.py` — MCP-сервер (stdio) с 17 инструментами поверх REST.
+
+Карта всех эндпоинтов арены (116 маршрутов, найдены разбором 88 JS-бандлов):
+
+```bash
+.venv/bin/python arena_agent/scan_api.py scan --download   # пересобрать карту
+.venv/bin/python arena_agent/scan_api.py probe             # зондировать из вкладки
+```
+
+Результат — `arena_agent/api_map.json` и `docs/ARENA_API.md`. Статусы и тела
+при перескане сохраняются, ручные маршруты берутся из `manual_routes.json`,
+пояснения — из `api_notes.json`.
+
+Новые команды CLI: `stream <id> [--seconds N] [--last-event-id X]`,
+`rename <id> "заголовок"`, `token <id>`, `upload <файл>`.

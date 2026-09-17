@@ -1,0 +1,22 @@
+[Unit]
+Description=Arena AI REST API (мост к arena.ai через Chrome CDP)
+Documentation=file:///opt/orchestrator/docs/ARENA.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/orchestrator
+Environment=ARENA_API_HOST=127.0.0.1
+Environment=ARENA_API_PORT=8790
+Environment=ARENA_API_AUTH=1
+Environment=ARENA_DATA_DIR=/opt/orchestrator/data/arena
+ExecStart=/opt/orchestrator/.venv/bin/python /opt/orchestrator/arena_service/app.py
+Restart=on-failure
+RestartSec=5
+# сервис управляет вкладкой браузера: держим один экземпляр
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -34,3 +34,11 @@ projects/
 
 # Резервные копии правок (локальные, не в git)
 agent_jo/.bak_*/
+
+# Кэш JS-бандлов arena.ai (~10 МБ, пересобирается: scan_api.py scan --download)
+arena_agent/.jscache/
+
+# Скилл arena.ai версионируем, хотя остальные артефакты agent_profile приватные
+!agent_profile/skills/
+agent_profile/skills/*
+!agent_profile/skills/skill-arena-ai.md

@@ -1,0 +1,1372 @@
+[
+ {
+  "method": "GET",
+  "path": "/agent/{id}",
+  "kinds": [
+   "manual",
+   "page"
+  ],
+  "probe": "200 — RSC-пейлоад с транскриптом и publicAccessToken",
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/batches/{batchId}",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/runs",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/runs/{runId}",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/sessions/{id}/channels/{channel}",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "POST",
+  "path": "/ai-proxy/realtime/v1/sessions/{id}/in/append",
+  "kinds": [
+   "manual",
+   "fetch"
+  ],
+  "probe": "200 — проверено записью (arena_api.send_message)",
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/sessions/{id}/out",
+  "kinds": [
+   "manual",
+   "fetch"
+  ],
+  "probe": "200 SSE — проверено чтением потока (arena_api.stream_out)",
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/streams/{runId}/webdev-stream",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/ai-proxy/realtime/v1/streams/{runId}/{streamId}",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "POST",
+  "path": "/ai-proxy/realtime/v1/streams/{runId}/{streamId}/append",
+  "kinds": [
+   "manual"
+  ],
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/api/billing/balance",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "11439-05b97f1ec6f86cb4.js"
+  ],
+  "usage": "();if(!e.ok){let t=await e.text();throw Error(`Failed to fetch billing balance (${e.status}): ${t}`)}return c.vw.parse(await e.json())}var g=n(88148);function x(e){let t,n,c=(0,r.c)(14),{settledItemCount:d,isFreeSession:u}=e,m=(0,i.y)(),p=(0,g.kH)(g.Q_),x=m&&!p;c[0]!==d||c[1]!==x?(t={enabled:x,settl",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "0ef39ef0-f24741843eabf22d.js",
+   "0f61ce53-c4de37a391c38094.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/agent-models",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent_page-43f37e"
+  ],
+  "usage": "();if(!e.ok){let t=await e.text();throw Error(`Failed to fetch agent models (${e.status}): ${t}`)}return z.parse(await e.json()).models}let T=(0,a(52051).A)(\"FlaskConical\",[[\"path\",{d:\"M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2\",key:\"18mbv",
+  "probe": "403 {\"error\":\"Not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/trigger-session",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({json:{sessionId:e,timezone:e1.timezone}});if(!t.ok)throw Error(\"Failed to start chat session\");return t.json()},[e1.timezone,e]),e4=(0,l.useMemo)(()=>(function(e=globalThis.fetch){return async(t,s,a)=>{try{let n=await e(t,s);return n.ok||U({endpoint:a.endpoint,url:t,statusCode:n.status}),n}catch(e",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/trigger-token",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({json:{sessionId:e}});if(!t.ok)throw Error(\"Failed to create chat access token\");let{token:s}=await t.json();return s},[e]),e3=(0,l.useCallback)(async()=>{let t=await eu.F.chat[\"trigger-session\"].$post({json:{sessionId:e,timezone:e1.timezone}});if(!t.ok)throw Error(\"Failed to start chat session\");r",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/workspace/cas/user/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js",
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"code\":\"too_small\",\"minimum\":43,\"type\":\"string\",\"incl"
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/chat/{id}",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({param:{id:e}})).ok)throw Error(\"Failed to delete agentic session\")}async function f(e){if(!(await p.F.chat[\":id\"].archive.$post({param:{id:e}})).ok)throw Error(\"Failed to archive agentic session\")}async function h(e){if(!(await p.F.chat[\":id\"].unarchive.$post({param:{id:e}})).ok)throw Error(\"Faile",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/archive",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({param:{id:e}})).ok)throw Error(\"Failed to archive agentic session\")}async function h(e){if(!(await p.F.chat[\":id\"].unarchive.$post({param:{id:e}})).ok)throw Error(\"Failed to unarchive agentic session\")}let S=()=>{let e,a,t,s,o,l=(0,i.c)(12),d=(0,n.jE)(),u=(0,g.kH)(N);return l[0]!==u?(e=async e=>{l",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/arena-feedback",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e.sessionId},json:{sessionNodeId:e.sessionNodeId,text:e.text,recaptchaV3Token:e.recaptchaV3Token}});if(!t.ok)return{status:\"error\",message:await au(t),source:t};return{status:\"success\"}}catch(e){return{status:\"error\",message:e instanceof Error&&e.message?e.message:null,source:{cause:Stri",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/cost",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "91491-82da6121afadff0c.js"
+  ],
+  "usage": "({param:{id:e},query:{includeSession:\"false\",messageIds:t.join(\",\")}});if(!a.ok){let e=await a.text();throw Error(`Failed to fetch agent message costs (${a.status}): ${e}`)}return m.parse(await a.json()).messages}async function v(e,s){if(\"agent\"===e){let e=await b.F.chat[\":id\"].cost.$get({param:{id:",
+  "probe": "403 {\"error\":\"Unauthorized\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/messages",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e},query:{cursor:t,limit:a}},{init:{signal:s}});if(!n.ok)throw new eb(n.status);let r=await n.json();return{messages:r.messages,pagination:r.pagination}}var ev=s(53664),ej=s(77520),e_=s(18761);let ew=e=>[e_.l,\"latest-workspace\",e];function eN(e,t){e.invalidateQueries({queryKey:ew(t)})}va",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"code\":\"invalid_type\",\"expected\":\"string\",\"received\":"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/preview",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e}});if(!s.ok)throw Error(`Failed to fetch sandbox preview (${s.status})`);return await s.json()}}));function eM(e){return e?`${ek.lX}/${e.repoName}`:ek.lX}var eF=s(6244);function eL(e){let t=new Set;for(let s of e)if(\"assistant\"===s.role)for(let e of s.parts)\"tool-present_file\"===e.type",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/preview/heartbeat",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e}}):await eu.F.chat[\":id\"].preview.$get({param:{id:e}});if(!s.ok)throw Error(`Failed to fetch sandbox preview (${s.status})`);return await s.json()}}));function eM(e){return e?`${ek.lX}/${e.repoName}`:ek.lX}var eF=s(6244);function eL(e){let t=new Set;for(let s of e)if(\"assistant\"===s.ro",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/review-feedback",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e.sessionId},json:\"check_in\"===e.feedback.type?{...t,action:e.feedback.value}:{...t,feedback:e.feedback}});if(!s.ok)return{status:\"error\",error:await tp(s)};return{status:\"success\"}}catch(e){return{status:\"error\",error:e instanceof Error?e:Error(tu)}}}var tf=s(82708),th=s(88809);let tx=[",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/unarchive",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({param:{id:e}})).ok)throw Error(\"Failed to unarchive agentic session\")}let S=()=>{let e,a,t,s,o,l=(0,i.c)(12),d=(0,n.jE)(),u=(0,g.kH)(N);return l[0]!==u?(e=async e=>{let{entry:a,title:t}=e;if(!u)throw new E;let i=await p.F.history[\":type\"][\":id\"].$patch({param:{type:a.type,id:a.id},json:{title:t.tr",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/workspace/latest",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:m},query:{includeManifest:\"true\"}});if(!e.ok)throw Error(`Failed to fetch latest workspace (${e.status})`);let t=await e.json();return{manifestNodeId:t.manifestNodeId,leafMessageId:t.leafMessageId,manifest:t.manifest?ej.If.parse(t.manifest):null}}})),p[0]=m,p[1]=t;else t=p[1];p[2]!==h||p",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/{id}/workspace/preview-token",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e},json:{manifestNodeId:t}});if(501===s.status)return null;if(!s.ok)throw Error(`Failed to mint workspace preview grant (${s.status})`);return lL.parse(await s.json())}})),l[0]=t,l[1]=e,l[2]=s;else s=l[2];let c=o&&null!=e&&null!=t;l[3]!==s||l[4]!==c?(a={...s,enabled:c,placeholderData:lU}",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"validation\":\"uuid\",\"code\":\"invalid_string\",\"message\""
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/workspace/{manifestNodeId}",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e,manifestNodeId:t}});if(!s.ok)throw Error(`Failed to fetch workspace manifest (${s.status})`);let n=await s.json();return n.manifest?a.If.parse(n.manifest):null}})),d=(e,t,s)=>(0,i.IY)((0,n.j)({queryKey:[l.l,\"workspace-dir\",e,t,s??\"\"],staleTime:1/0,enabled:null!=e&&null!=t&&null!=s,quer",
+  "probe": "404 {\"error\":\"Node \\\"00000000-0000-0000-0000-000000000000\\\" not found in session \\\"01a06bdc-ef"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/workspace/{manifestNodeId}/dir",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({param:{id:e,manifestNodeId:t},query:{path:s}});if(!n.ok)throw Error(`Failed to fetch workspace directory (${n.status})`);let i=await n.json();return i.directory?a.jc.parse(i.directory):null}}))},17050:(e,t,s)=>{\"use strict\";s.d(t,{p:()=>r});var a=s(6740),n=s(30265);let r=s(47288).forwardRef(({clas",
+  "probe": "404 {\"error\":\"Node \\\"00000000-0000-0000-0000-000000000000\\\" not found in session \\\"01a06bdc-ef"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{id}/workspace/{nodeId}/dir",
+  "kinds": [
+   "manual"
+  ],
+  "probe": "200 — листинг каталога песочницы (?path=)",
+  "usage": ""
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/{param}/workspace/{param}/download",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Session \\\"00000000-0000-0000-0000-000000000000\\\" not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent_page-43f37e"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/coding-agent/sessions",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent_page-43f37e"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions/{param}",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"not_found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions/{param}/diff/download",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Coding session \\\"00000000-0000-0000-0000-000000000000\\\" not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions/{param}/diff/{param}",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Coding session \\\"00000000-0000-0000-0000-000000000000\\\" not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions/{param}/diff/{param}/file",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"code\":\"invalid_type\",\"expected\":\"string\",\"received\":"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding-agent/sessions/{param}/workflow-checks",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"not_found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/branches",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"code\":\"invalid_type\",\"expected\":\"number\",\"received\":"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/connect/install",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "ERR JS-ошибка: {\"exceptionId\": 1, \"text\": \"Uncaught (in promise) TypeError: Failed t"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/connect/start",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "ERR JS-ошибка: {\"exceptionId\": 2, \"text\": \"Uncaught (in promise) TypeError: Failed t"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/connection",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/disconnect",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/coding/github/disconnect",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/repos",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/coding/github/status",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "502 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloud"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/status",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "502 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloud"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/sync",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/tools",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "502 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloud"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/{param}/link-token",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/connectors/{param}/tools",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "24113-6629d9075e77eec7.js"
+  ],
+  "usage": "",
+  "probe": "502 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloud"
+ },
+ {
+  "method": "GET",
+  "path": "/api/early_access_features/",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "5df66dfc-5704234b3f03d772.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/evaluation/webdev/{messageId}",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "({param:{messageId:e}});if(!t.ok){let e=await t.text();throw Error(`Failed to fetch webdev metadata (${t.status}): ${e}`)}let a=n.Un.parse(await t.json());return\"pending\"===a.status?{status:\"pending\",files:[]}:function(e,t){let a=e.binaryFiles??[],n=e.template.kind;switch(e.buildResult.status){case\"",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/evaluation/webdev/{messageId}/database",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "({param:{messageId:e},query:a});if(!i.ok){let e=await i.text();throw Error(`Failed to fetch webdev database (${i.status}): ${e}`)}return n.Y7.parse(await i.json())}},15324:(e,t,a)=>{\"use strict\";a.d(t,{Hw:()=>c,Iv:()=>u,JO:()=>l,Wy:()=>o,Z1:()=>s});var n=a(52284),i=a(68039),r=a(79244);let s=()=>(0,r",
+  "probe": "404 {\"error\":\"Webdev manifest not ready for message 00000000-0000-0000-0000-000000000000\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/evaluation/webdev/{param}/stream-credentials",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Message not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/evaluation/{id}/cost",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "91491-82da6121afadff0c.js"
+  ],
+  "usage": "({param:{id:s}});if(!t.ok){let e=await t.text();throw Error(`Failed to fetch evaluation session cost (${t.status}): ${e}`)}return g.parse(await t.json())}var y=t(47288);let M={messages:{},missingIds:[]};function C(e=M,s,t=[]){let a={...e.messages,...s};return{messages:a,missingIds:[...new Set([...e.",
+  "probe": "403 {\"error\":\"Unauthorized\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/history/search",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({query:{q:e,includeArchived:a?\"true\":\"false\",cursor:t??void 0,limit:i,mode:n,modality:r,type:s,archivedOnly:void 0!==o?o?\"true\":\"false\":void 0}});if(!l.ok){let e=await l.text();throw Error(`Failed to search history (${l.status}): ${e||\"Unknown error\"}`)}return y.parse(await l.json())}var I=t(5856);",
+  "probe": "400 {\"success\":false,\"error\":{\"issues\":[{\"code\":\"invalid_type\",\"expected\":\"string\",\"received\":"
+ },
+ {
+  "method": "GET",
+  "path": "/api/history/unified",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({query:{cursor:e??void 0,limit:a,includeArchived:t?\"true\":\"false\",mode:i,modality:n,type:r,archivedOnly:void 0!==s?s?\"true\":\"false\":void 0}});if(!o.ok){let e=await o.text();throw Error(`Failed to fetch unified history (${o.status}): ${e||\"Unknown error\"}`)}return E.parse(await o.json())}async funct",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "PATCH",
+  "path": "/api/history/{type}/{id}",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "15240-6cc22be7b7235ea1.js"
+  ],
+  "usage": "({param:{type:a.type,id:a.id},json:{title:t.trim()}});if(!i.ok)throw new E(i);return i.json()},l[0]=u,l[1]=e):e=l[1],l[2]!==d?(a=async e=>{let{entry:a,title:t}=e,i=t.trim();c.analytics.capture({action:\"chat_rename\",params:I(a)}),await b(d,y);let n=d.getQueriesData({queryKey:z.l6.list}),r=d.getQuerie",
+  "probe": "skip (неизвестный параметр)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/me",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/me/pulse",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "11439-05b97f1ec6f86cb4.js"
+  ],
+  "usage": "();if(!e.ok){let t=await e.text();throw Error(`Failed to fetch user pulse (${e.status}): ${t}`)}return l.Yw.parse(await e.json())}var p=n(47288),g=n(52284),x=n(88148);function h(e){let t,n,l,c,d=(0,r.c)(12),{settledItemCount:u,isFreeSession:f,surface:h}=e,b=(0,x.kH)(x.Q_),y=!b;d[0]!==u||d[1]!==y?(t=",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/me/update-tou-consent",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "11439-05b97f1ec6f86cb4.js",
+   "app__5Blocale_5D__app__agent_layout-1443"
+  ],
+  "usage": "().catch(()=>{console.error(\"Failed to persist TOU consent to server\")})}catch{d.analytics.capture({action:\"terms_of_service_modal_accept_failed\"}),(0,m.K)(\"Failed to accept terms-of-use\"),n?.reject(),a(null)}finally{b(!1)}};return(0,r.jsx)(c.lG,{open:e,onOpenChange:e=>{e||(b(!1),n?.reject(),a(null)",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/product_tours/",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "5df66dfc-5704234b3f03d772.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "POST",
+  "path": "/api/storage/generate-agent-upload-url",
+  "kinds": [
+   "rpc"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js",
+   "app__5Blocale_5D__app__agent__5Bid_5D_pa"
+  ],
+  "usage": "({json:{hash:t,contentType:a,size:e.size}});if(!n.ok){let e=Error(`Failed to generate agent upload URL: ${n.status}`);if(n.status>=400&&n.status<500)throw new c.l(e);throw e}return n.json()});return await m(async()=>{let t=await fetch(s,{method:\"PUT\",body:e,headers:{\"Content-Type\":e.type}});if(!t.ok",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/surveys/",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "5df66dfc-5704234b3f03d772.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/api/web_experiments/",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "5df66dfc-5704234b3f03d772.js"
+  ],
+  "usage": "",
+  "probe": "403 {\"error\":\"Route not allowed\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/auto-modality",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/auto-modality",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/autoeval/release-banner",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar__la"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/factuality/ratings",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "11035-fac3ad638ea27d28.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/resend-verification",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/resend-verification",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/reset-password/change",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "68535-f7d6aa430e33f707.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/reset-password/change",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "68535-f7d6aa430e33f707.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/reset-password/confirm",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/reset-password/confirm",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/reset-password/request",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/reset-password/request",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/sign-in/email",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/sign-in/email",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/sign-in/google",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/sign-out",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "39164-1b11a719352f2be6.js",
+   "app__5Blocale_5D__app__agent_error-96e53",
+   "app_global-error-9f7269f0bb2619f3.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/sign-up",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "39164-1b11a719352f2be6.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/sign-up",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "39164-1b11a719352f2be6.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/sign-up/magic-link",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/sign-up/magic-link",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "85923-b8d0d720f0be9609.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/create-chat",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent_page-43f37e"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/create-chat",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app__agent_page-43f37e"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/create-evaluation",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/create-evaluation",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/post-to-evaluation/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/post-to-evaluation/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/rerun/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/rerun/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/resample/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/resample/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/resume-video-workflow/{param}",
+  "kinds": [
+   "fetch",
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Session not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/resume-webdev/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "404 {\"error\":\"Message not found\"}"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/retry-evaluation-session-message/{param}/messages/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "PUT",
+  "path": "/nextjs-api/stream/retry-evaluation-session-message/{param}/messages/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "86022-0874f3e34ee29a64.js"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/skip-direct-battle/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/skip-direct-battle/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "405 "
+ },
+ {
+  "method": "GET",
+  "path": "/nextjs-api/stream/stop/{param}/messages/{param}",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "POST",
+  "path": "/nextjs-api/stream/stop/{param}/messages/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "app__5Blocale_5D__app___with-sidebar___f"
+  ],
+  "usage": "",
+  "probe": "skip (небезопасно зондировать)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/queue-concurrency#deadlock",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/queue-concurrency#waiting-for-a-subtask-on-the-same-queue",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/troubleshooting#parallel-waits-are-not-supported",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/troubleshooting#task-run-stalled-executing",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/troubleshooting#uncaught-exceptions",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/upgrading-beta",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "https://trigger.dev/docs/v3/machines",
+  "kinds": [
+   "literal"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "skip (внешний хост)"
+ },
+ {
+  "method": "GET",
+  "path": "{param}/api/v1/reports/{param}",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ },
+ {
+  "method": "POST",
+  "path": "{param}/api/v3/batches/{param}/items",
+  "kinds": [
+   "fetch"
+  ],
+  "chunks": [
+   "69510-15504e66f79f57a5.js"
+  ],
+  "usage": "",
+  "probe": "200 (тело не публикуем: личные данные)"
+ }
+]

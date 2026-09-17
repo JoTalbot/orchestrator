@@ -18,6 +18,10 @@ arena_ctl.py — управление чатами Arena AI (Agent Mode) из к
   send <id> "текст" [--wait]           отправить сообщение в существующий чат
   stop <id>                            остановить генерацию
   wait <id> [--timeout 600]            ждать завершения ответа агента
+  stream <id> [--seconds 30]           живой SSE-поток ответа агента
+  rename <id> "заголовок"              переименовать чат
+  token <id>                           publicAccessToken сессии (Trigger.dev)
+  upload <файл>                        загрузить файл в CAS агента
 
 Всё работает через вкладку arena.ai в браузере (CDP :9222) — Cloudflare и
 reCAPTCHA Enterprise не пускают прямой HTTP с серверного IP.
@@ -29,7 +33,8 @@ import sys
 import time
 
 sys.path.insert(0, "/opt/orchestrator/arena_agent")
-from arena_api import ArenaAPI, connect, light_message  # noqa: E402
+from arena_api import (ArenaAPI, connect, light_message,  # noqa: E402
+                       transcript_text, wait_idle)
 
 
 def jdump(o, n=None):
@@ -51,36 +56,6 @@ def to_markdown(tr, title=""):
                 out.append("```json\n%s\n```" % t.get("output"))
         out.append("")
     return "\n".join(out)
-
-
-async def wait_idle(api, chat_id, timeout=600, interval=6, verbose=True):
-    """Ждём, пока агент закончит ход: последнее сообщение — assistant,
-    текст не меняется два опроса подряд, нет pending-частей."""
-    t0, last_len, stable = time.time(), -1, 0
-    while time.time() - t0 < timeout:
-        tr = (await api.transcript_latest(chat_id))[0] or {}
-        msgs = tr.get("messages") or []
-        last = msgs[-1] if msgs else {}
-        txt = json.dumps(last.get("parts"), ensure_ascii=False)
-        pending = bool((last.get("metadata") or {}).get("pending"))
-        unfinished = any(p.get("state") not in (None, "done", "output-available",
-                                                "output-error")
-                         for p in (last.get("parts") or [])
-                         if isinstance(p, dict))
-        if verbose:
-            print("  %3d с | сообщений %d | последнее: %s | %d байт | pending=%s"
-                  % (time.time() - t0, len(msgs), last.get("role"), len(txt),
-                     pending), flush=True)
-        if (last.get("role") == "assistant" and not pending and not unfinished
-                and len(txt) == last_len):
-            stable += 1
-            if stable >= 1:
-                return tr
-        else:
-            stable = 0
-        last_len = len(txt)
-        await asyncio.sleep(interval)
-    return tr
 
 
 async def main_async(a):
@@ -141,6 +116,25 @@ async def main_async(a):
             lm = light_message(last)
             print("\n=== последний ответ (%s) ===\n%s" % (last.get("role"),
                                                            (lm.get("text") or "")[:4000]))
+        elif cmd == "stream":
+            st = api.stream_state((await api.stream_out(
+                a.id, max_seconds=a.seconds,
+                last_event_id=a.last_event_id)).get("events") or [])
+            print("ход завершён: %s | событий: %d | lastEventId: %s"
+                  % (st["turnComplete"], len(st["events"]), st.get("lastEventId")))
+            for t in st["tools"]:
+                print("  инструмент: %s (%s)" % (t["toolName"], t.get("state")))
+            print("\n=== текст ===\n%s" % (st["text"] or "(пусто)"))
+            if a.verbose and st["reasoning"]:
+                print("\n=== рассуждение ===\n%s" % st["reasoning"][:2000])
+        elif cmd == "rename":
+            r = await api.rename(a.id, a.text or "")
+            print(r["status"], (r["body"] or "")[:300])
+        elif cmd == "token":
+            print(await api.trigger_token(a.id))
+        elif cmd == "upload":
+            data = open(a.id, "rb").read()
+            jdump(await api.upload(data))
         elif cmd == "create":
             r = await api.create_chat(a.text, timezone=a.tz)
             print("создан чат:", json.dumps(r, ensure_ascii=False))
@@ -184,11 +178,13 @@ def main():
     ap.add_argument("--wait", action="store_true")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--tz", default="Europe/Kiev")
+    ap.add_argument("--seconds", type=int, default=30, help="для stream")
+    ap.add_argument("--last-event-id", default=None, help="для stream: продолжить")
     ap.add_argument("--use-current-tab", action="store_true")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
     # для search/create/send текст может прийти вторым аргументом
-    if a.cmd in ("search", "create") and a.text is None and a.id:
+    if a.cmd in ("search", "create", "rename") and a.text is None and a.id:
         a.text, a.id = a.id, None
     asyncio.run(main_async(a))
 

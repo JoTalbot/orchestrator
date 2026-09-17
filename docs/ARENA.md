@@ -390,3 +390,100 @@ curl -s -H "X-API-Key: $TOKEN" -H 'Content-Type: application/json' \
      -d '{"text":"задача","model_id":"<id из /models>","wait":true}' \
      localhost:8790/chats
 ```
+
+## 12. OpenAI-совместимый шлюз (`arena-gateway`)
+
+Полноценный мост arena.ai → OpenAI API: любой клиент (Cursor, OpenAI SDK, `curl`,
+LangChain, балансировщик AIOS, Hermes) получает чат/поиск/картинки арены как обычную
+OpenAI-модель. Подробности — **`docs/ARENA_GATEWAY.md`**.
+
+* Сервис: `arena-gateway.service` → `http://127.0.0.1:8791` (`0.0.0.0`, Bearer-токен
+  `.secrets/arena_gateway_token.txt`; локальные запросы без токена).
+* Код: `arena_gateway/{app,engine,models,config,ctl}.py` + `install_integrations.py`.
+
+### Контракт direct-режима (добыт перехватом 17.09.2026)
+
+```
+POST https://arena.ai/nextjs-api/stream/create-evaluation
+{"id":"<uuid7>","mode":"direct-battle","modality":"chat","modelAId":"<UUID модели>",
+ "userMessageId":"<uuid7>","modelAMessageId":"<uuid7>",
+ "userMessage":{"content":"...","experimental_attachments":[],"metadata":{}},
+ "recaptchaV3Token":"<grecaptcha.enterprise.execute(sitekey,{action:'chat_submit'})>"}
+```
+
+Ответ — SSE-поток протокола AI SDK с префиксом слота модели (`a` = модель A, `b` = B):
+
+```
+a0:"дельта текста"            ← text-delta (JSON-строка)
+ad:{"finishReason":"stop"}    ← finish
+```
+
+* Режимы: `direct`, `direct-battle`, `side-by-side`, `battle`. Новый чат создаётся
+  только в `direct-battle` (`direct` → 400 «'direct' mode is not allowed when starting
+  a new conversation»).
+* Модальности: `auto`, `chat`, `webdev`, `search`, `image`, `p2l`, `video`, `audio`.
+* Продолжение диалога: `POST /nextjs-api/stream/post-to-evaluation/{sessionId}`
+  (то же тело без `mode`).
+* Закрытие чата: React Server Action `deleteEvaluationSession` (`POST` на текущий путь
+  с заголовком `Next-Action: <id>`); REST `DELETE /api/chat/{id}` для evaluation → 404.
+  Все 13 server actions выгружены в `data/arena/server_actions.json`.
+* История: `GET /api/history/unified` → записи `type:"evaluation"`, `mode:"direct-battle"`.
+
+### Выбор модели
+
+`modelAId` — UUID из каталога (`data/arena/models_catalog.json`, 1074 записи).
+В UI страницы тот же выбор задаётся query-параметром `?model_a=<publicName>`
+(неизвестное значение откатывается к дефолту `max`). Шлюз разрешает имя модели так:
+UUID → точное `publicName` → псевдоним (`sonnet`, `haiku`, `flux`, `max`, …) →
+частичное совпадение (приоритет: проверенные, затем ранг). Суффикс `:search|:image|
+:webdev|:video|:chat` переключает модальность (`sonnet:search` → `claude-sonnet-4-6-search`).
+
+### Анти-бот и темп (главная грабля)
+
+* reCAPTCHA **Enterprise** v3, sitekey `6LeTGMcs…`, action `chat_submit`
+  (в агент-режиме — `agentic_chat_submit`).
+* Отказ v3 → сайт показывает модалку «Security Verification» с чекбоксом v2
+  (sitekey `6Le3_cYs…`) и ретраит с `recaptchaV2Token`. У нас v2 сразу эскалирует
+  в картинный челлендж (bframe 400×580) — автоматически не решается, поэтому
+  `ARENA_GW_V2=false`.
+* Серия быстрых запросов (≈26 за 3 мин) даёт штраф: 403 `recaptcha validation failed`
+  и 429 c `retry-after` ≈ 1200 с, хотя глобальный счётчик `ratelimit: limit=1800;w=300`
+  почти не потрачен. Перезагрузка страницы/новая вкладка штраф НЕ снимают.
+* Поэтому шлюз держит темп 45 с (не более 6 за 15 мин), а после отказа уходит в
+  штрафной кулдаун 1200 с и быстро отвечает 503 + `Retry-After` вместо выжигающих
+  ретраев. Интервал адаптивный: отказ → ×2 (до 900 с), успех → ×0.9 (до 45 с).
+  Состояние переживает перезапуск (`data/arena/gateway_state.json`).
+
+### Вотчдоги
+
+| Ситуация | Реакция |
+|---|---|
+| нет токена reCAPTCHA 20 с | ошибка `no_response`/`transport` |
+| арена не ответила за 60 с | 504 `no_response`, задание отменяется (`AbortController`) |
+| поток молчит 60 с | 504 `stream_stalled` |
+| ответ дольше 300 с | 504 `timeout` |
+| вкладка пропала / уехала / потеряла `grecaptcha` | вотчдог (каждые 30 с) поднимает новую вкладку и переустанавливает JS-ядро |
+| 403 recaptcha / 429 | штрафной кулдаун + замедление темпа |
+
+### Быстрая проверка
+
+```bash
+curl -s http://127.0.0.1:8791/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"claude-sonnet-4.5","messages":[{"role":"user","content":"Привет"}]}'
+curl -sN ... -d '{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"до 10"}]}'
+curl -s http://127.0.0.1:8791/v1/arena/status | jq '{ok,adaptive_interval_s,cooldown_remaining_s,counters}'
+cd /opt/orchestrator/arena_gateway && ../.venv/bin/python ctl.py health --deep
+```
+
+### Подключение к Hermes/AIOS
+
+```bash
+python3 arena_gateway/install_integrations.py --dry   # показать изменения
+python3 arena_gateway/install_integrations.py         # применить (провайдеры arena-*, тир arena)
+sudo systemctl restart octopus-aios.service hermes-shim.service
+```
+
+В `llm_balancer.py` это `OpenAICompatibleCloudProvider("arena-<slug>",
+"http://127.0.0.1:8791/v1", "<publicName>", arena_keys, tier="arena", weight=…, timeout=150.0)`,
+ключ `ARENA_GATEWAY_KEY` в `/etc/octopus/secrets.env`; в `hermes-models.yaml` —
+псевдоним `hermes-arena` (тир `arena`).

@@ -159,3 +159,28 @@ arena_balance, arena_rename, arena_archive, arena_delete, arena_export, arena_ap
 9. Если мост отвечает ошибками вкладки — перезапустить сервис:
    `sudo systemctl restart arena-api`; если умер браузер —
    `sudo docker restart octopus-browser-chromium`.
+
+## OpenAI-совместимый шлюз (arena-gateway, порт 8791)
+
+Любой OpenAI-клиент (Cursor, SDK, curl, Hermes) может ходить в арену как в обычный API.
+
+```bash
+# чат (stream и без)
+curl -s http://127.0.0.1:8791/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"claude-sonnet-4.5","messages":[{"role":"user","content":"Привет"}]}'
+# модели, статус, пробник доступности
+curl -s http://127.0.0.1:8791/v1/models | jq -r '.data[].id' | head
+curl -s http://127.0.0.1:8791/v1/arena/status | jq '{ok,adaptive_interval_s,cooldown_remaining_s,counters}'
+curl -s -X POST http://127.0.0.1:8791/v1/arena/probe -d '{"limit":6,"modality":"chat"}'
+```
+
+* Выбор модели: имя из каталога, UUID или псевдоним; суффикс `:search|:image|:webdev|:video`
+  задаёт модальность (`sonnet:search`).
+* Каждый запрос = новый приватный чат арены в режиме `direct-battle`, ответ читается
+  из SSE-потока (`a0:"…"` — дельты, `ad:{…}` — finish), после чего чат удаляется
+  server action `deleteEvaluationSession`.
+* Темп ограничен самой ареной: 45 с между запросами, 6 за 15 минут; при отказе
+  reCAPTCHA шлюз уходит в кулдаун 20 минут и отдаёт 503 + `Retry-After`.
+* Отладка без HTTP: `cd /opt/orchestrator/arena_gateway && ../.venv/bin/python ctl.py
+  health --deep | models --verified | resolve sonnet:search | ask "текст" --stream | raw "текст" | probe`.
+* Документация: `docs/ARENA_GATEWAY.md`, раздел 12 в `docs/ARENA.md`.

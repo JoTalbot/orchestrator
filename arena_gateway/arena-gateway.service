@@ -1,0 +1,39 @@
+[Unit]
+Description=Arena AI OpenAI-compatible gateway (direct mode)
+Documentation=file:///opt/orchestrator/docs/ARENA_GATEWAY.md
+After=network-online.target arena-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/orchestrator/arena_gateway
+Environment=PYTHONUNBUFFERED=1
+# --- сеть
+Environment=ARENA_GW_PORT=8791
+# --- темп (анти-кулдаун): не чаще 1 запроса в 45 с, не более 6 за 15 минут
+Environment=ARENA_GW_MIN_INTERVAL=45
+Environment=ARENA_GW_BURST_LIMIT=6
+Environment=ARENA_GW_BURST_WINDOW=900
+Environment=ARENA_GW_MAX_INTERVAL=900
+Environment=ARENA_GW_PENALTY=1200
+Environment=ARENA_GW_COOLDOWN_WAIT=60
+# --- вотчдоги
+Environment=ARENA_GW_TOKEN_TIMEOUT=20
+Environment=ARENA_GW_FIRST_BYTE=60
+Environment=ARENA_GW_IDLE=60
+Environment=ARENA_GW_TOTAL=300
+# --- reCAPTCHA v2 (картинный челлендж) отключена
+Environment=ARENA_GW_V2=false
+# --- жизненный цикл чата
+Environment=ARENA_GW_CLEANUP=true
+Environment=ARENA_GW_CLEANUP_MODE=delete
+# --- модель по умолчанию
+Environment=ARENA_GW_DEFAULT_MODEL=claude-sonnet-4-5-20250929
+ExecStart=/opt/orchestrator/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8791 --log-level info
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

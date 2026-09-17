@@ -401,6 +401,9 @@ async def arena_pause(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    if body.get("clear_security_block"):
+        engine.security_blocked = False
+        engine.block_pause_until = 0.0
     return engine.pause(float(body.get("seconds") or 0),
                         reset_interval=bool(body.get("reset_interval")))
 

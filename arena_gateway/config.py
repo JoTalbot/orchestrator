@@ -66,6 +66,10 @@ RECAPTCHA_PENALTY = _f("ARENA_GW_PENALTY", 1200)   # штрафной кулда
 # чем 20 мин): 1200 → 2400 → 4800 → PENALTY_MAX
 PENALTY_ESCALATE = _b("ARENA_GW_PENALTY_ESCALATE", True)
 PENALTY_MAX = _f("ARENA_GW_PENALTY_MAX", 7200)
+# модалка «Security Verification» (флаг аккаунта, нужен человек) — автопауза
+BLOCK_PAUSE = _f("ARENA_GW_BLOCK_PAUSE", 7200)
+# сколько отказов reCAPTCHA подряд считать флагом аккаунта (а не сбоем темпа)
+BLOCK_STREAK = int(_f("ARENA_GW_BLOCK_STREAK", 2))
 BACKOFF_FACTOR = _f("ARENA_GW_BACKOFF", 2.0)
 RECOVER_FACTOR = _f("ARENA_GW_RECOVER", 0.9)
 

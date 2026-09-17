@@ -236,6 +236,8 @@ class ArenaEngine:
         self._hits = collections.deque()
         self.cooldown_until = 0.0
         self.recaptcha_streak = 0   # подряд идущие отказы reCAPTCHA
+        self.security_blocked = False   # арена показывает модалку ручной проверки
+        self.block_pause_until = 0.0    # до когда длится автопауза из-за модалки
         self.counters = collections.Counter()
         self.unknown_codes = collections.Counter()
         self.last_success = None
@@ -259,6 +261,8 @@ class ArenaEngine:
         except Exception:
             return
         self.recaptcha_streak = int(d.get("recaptcha_streak") or 0)
+        self.security_blocked = bool(d.get("security_blocked"))
+        self.block_pause_until = float(d.get("block_pause_until") or 0)
         cu = float(d.get("cooldown_until") or 0)
         if cu > time.time():
             self.cooldown_until = cu
@@ -279,6 +283,8 @@ class ArenaEngine:
             os.makedirs(os.path.dirname(self.cfg.STATE), exist_ok=True)
             json.dump({"cooldown_until": self.cooldown_until, "interval": self.interval,
                        "recaptcha_streak": self.recaptcha_streak,
+                       "security_blocked": self.security_blocked,
+                       "block_pause_until": self.block_pause_until,
                        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                        "counters": dict(self.counters)},
                       open(self.cfg.STATE, "w"), ensure_ascii=False, indent=1)
@@ -423,6 +429,10 @@ class ArenaEngine:
 
     def _speed_up(self):
         self.recaptcha_streak = 0
+        if self.security_blocked:
+            self.security_blocked = False
+            self.block_pause_until = 0.0
+            log.info("запрос прошёл — флаг ручной проверки снят")
         self.interval = max(self.cfg.MIN_INTERVAL, self.interval * self.cfg.RECOVER_FACTOR)
         self._save_state()
 
@@ -472,6 +482,12 @@ class ArenaEngine:
                 wait = self.cooldown_until - now
                 if wait > 0:
                     if wait_budget is not None and now + wait > deadline + 1:
+                        if self.security_blocked:
+                            raise ArenaError(503, "security_check",
+                                             "арена требует ручную проверку «Security "
+                                             "Verification» — автоматические запросы "
+                                             "отключены ещё %d с" % int(wait),
+                                             retry_after=int(wait))
                         raise ArenaError(503, "cooldown",
                                          "арена в кулдауне ещё %d с" % int(wait),
                                          retry_after=int(wait))
@@ -754,15 +770,20 @@ class ArenaEngine:
                 body = json.dumps(body, ensure_ascii=False)
             raw_body = body or ""
             if http_status == 403 and "recaptcha" in str(raw_body).lower():
-                self.counters["recaptcha_failed"] += 1
                 if self.cfg.V2_ENABLED and not attempt_v2:
+                    self.counters["recaptcha_failed"] += 1
                     log.warning("recaptcha v3 отклонена → эскалация к v2")
                     attempt_v2 = True
                     continue
-                self.recaptcha_streak += 1
-                pen = self._slow_down("recaptcha 403, неудач подряд: %d"
-                                      % self.recaptcha_streak,
-                                      self.cfg.RECAPTCHA_PENALTY, escalate=True)
+                asyncio.create_task(self._mark_block_if_modal("403 recaptcha"))
+                pen = self._on_recaptcha_fail()
+                if self.security_blocked:
+                    raise ArenaError(403, "security_check",
+                                     "арена требует ручную проверку «Security Verification»: "
+                                     "аккаунт помечен, автоматические запросы отключены на %d с. "
+                                     "Нужен человек в браузере (или долгое ожидание). Причина: %s"
+                                     % (pen, raw_body),
+                                     retry_after=pen)
                 raise ArenaError(403, "recaptcha",
                                  "reCAPTCHA отклонила запрос (аккаунт временно помечен; "
                                  "шлюз ушёл в кулдаун на %d с): %s" % (pen, raw_body),
@@ -846,6 +867,7 @@ class ArenaEngine:
              "cooldown_remaining_s": max(0, int(self.cooldown_until - time.time())),
              "adaptive_interval_s": int(self.interval),
              "recaptcha_streak": self.recaptcha_streak,
+             "security_check_required": self.security_blocked,
              "paused": self.cooldown_until > time.time(),
              "queue": {"concurrency": self.cfg.MAX_CONCURRENCY,
                        "hits_in_window": len(self._hits),
@@ -882,6 +904,67 @@ class ArenaEngine:
             h["error"] = str(e)[:300]
         return h
 
+    def _on_recaptcha_fail(self):
+        """403 `recaptcha validation failed`: счётчики, нарастающий штраф, автоблокировка.
+
+        Серия отказов подряд (BLOCK_STREAK) означает не сбой темпа, а флаг на аккаунт:
+        арена требует ручную проверку «Security Verification», и дальнейшие попытки
+        только продлевают его. Поэтому уходим в длинную автопаузу.
+        """
+        self.counters["recaptcha_failed"] += 1
+        self.recaptcha_streak += 1
+        pen = self._slow_down("recaptcha 403, неудач подряд: %d" % self.recaptcha_streak,
+                              self.cfg.RECAPTCHA_PENALTY, escalate=True)
+        if self.recaptcha_streak >= self.cfg.BLOCK_STREAK and not self.security_blocked:
+            self._enter_security_block(
+                "403 recaptcha подряд: %d — темп тут ни при чём, арена помечает аккаунт"
+                % self.recaptcha_streak)
+            pen = max(pen, int(self.cooldown_until - time.time()))
+        return pen
+
+    def _enter_security_block(self, reason):
+        """Флаг «нужен человек»: длинная автопауза, запросы не тратятся."""
+        self.security_blocked = True
+        self.block_pause_until = time.time() + self.cfg.BLOCK_PAUSE
+        self.cooldown_until = max(self.cooldown_until, self.block_pause_until)
+        self.counters["security_block"] += 1
+        log.warning("арена требует ручную проверку «Security Verification» (v2): %s. "
+                    "Автопауза %d с — автоматические запросы бессмысленны, "
+                    "нужен человек в браузере.", reason, int(self.cfg.BLOCK_PAUSE))
+        self._save_state(force=True)
+
+    async def _mark_block_if_modal(self, reason, delay=2.0):
+        """Проверить модалку после отказа (она рисуется не мгновенно)."""
+        try:
+            await asyncio.sleep(delay)
+            if await self.check_security_block():
+                self._enter_security_block(reason)
+        except Exception as e:
+            log.debug("_mark_block_if_modal: %s", e)
+
+    async def check_security_block(self):
+        """Показывает ли страница модалку «Security Verification» (v2-чекбокс).
+
+        Это флаг на аккаунт/IP: арена требует ручного решения, автоматические
+        запросы будут получать 403 `recaptcha validation failed` до тех пор,
+        пока человек не пройдёт проверку (или флаг не спадёт сам).
+        Возвращает True/False, а None — если определить не удалось.
+        """
+        try:
+            raw = await self.js("""(() => {
+              const t = document.body.innerText || '';
+              const ifr = [...document.querySelectorAll('iframe')].map(f => f.src || '');
+              return JSON.stringify({
+                modal: /Security Verification|Проверка безопасности/i.test(t),
+                v2frame: ifr.some(s => s.indexOf('6Le3_cYs') >= 0)
+              });
+            })()""", timeout=20)
+            d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            return bool(d.get("modal") or d.get("v2frame"))
+        except Exception as e:
+            log.debug("check_security_block: %s", e)
+            return None
+
     async def humanize(self):
         """Лёгкая имитация присутствия человека: движения мыши + небольшой скролл.
 
@@ -917,6 +1000,18 @@ class ArenaEngine:
         while True:
             try:
                 await asyncio.sleep(self.cfg.HEALTH_INTERVAL)
+                blocked = await self.check_security_block()
+                if blocked is True and not self.security_blocked:
+                    self._enter_security_block("модалка видна в вкладке")
+                elif blocked is False and self.security_blocked:
+                    # модалки не видно: даём один пробный запрос через минуту.
+                    # Если он пройдёт — _speed_up() снимет блокировку.
+                    if self.cooldown_until > time.time() and \
+                            abs(self.cooldown_until - self.block_pause_until) < 1:
+                        self.cooldown_until = time.time() + 60
+                        self.block_pause_until = 0.0
+                        log.info("модалка проверки исчезла — пробный запрос через 60 с")
+                        self._save_state(force=True)
                 if (self.cfg.HUMANIZE and self.tab and not self.tab.closed
                         and time.time() - last_human > self.cfg.HUMANIZE_EVERY):
                     last_human = time.time()

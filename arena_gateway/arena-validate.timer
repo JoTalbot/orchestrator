@@ -1,0 +1,10 @@
+[Unit]
+Description=Arena gateway: валидация ежедневно в 04:50 UTC (после пробника)
+
+[Timer]
+OnCalendar=*-*-* 04:50:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Arena gateway: ежедневная сквозная валидация (quick)
+After=network.target arena-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "/opt/orchestrator/arena_gateway/validate.sh --quick >> /opt/orchestrator/data/arena/validate_daily.log 2>&1; true"

@@ -238,6 +238,7 @@ class ArenaEngine:
         self.recaptcha_streak = 0   # подряд идущие отказы reCAPTCHA
         self.security_blocked = False   # арена показывает модалку ручной проверки
         self.block_pause_until = 0.0    # до когда длится автопауза из-за модалки
+        self.budget = {"day": "", "used": 0}   # дневной бюджет обращений к арене
         self.counters = collections.Counter()
         self.unknown_codes = collections.Counter()
         self.last_success = None
@@ -263,6 +264,10 @@ class ArenaEngine:
         self.recaptcha_streak = int(d.get("recaptcha_streak") or 0)
         self.security_blocked = bool(d.get("security_blocked"))
         self.block_pause_until = float(d.get("block_pause_until") or 0)
+        b = d.get("budget")
+        if isinstance(b, dict):
+            self.budget = {"day": str(b.get("day") or ""),
+                           "used": int(b.get("used") or 0)}
         cu = float(d.get("cooldown_until") or 0)
         if cu > time.time():
             self.cooldown_until = cu
@@ -285,6 +290,7 @@ class ArenaEngine:
                        "recaptcha_streak": self.recaptcha_streak,
                        "security_blocked": self.security_blocked,
                        "block_pause_until": self.block_pause_until,
+                       "budget": self.budget,
                        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                        "counters": dict(self.counters)},
                       open(self.cfg.STATE, "w"), ensure_ascii=False, indent=1)
@@ -708,6 +714,7 @@ class ArenaEngine:
         last = None
         for attempt in range(1 + self.cfg.RETRIES_PROMPT_FAILED + (1 if self.cfg.V2_ENABLED else 0)):
             await self._gate(wait_budget)
+            self._budget_hit()
             text_parts, reason_parts, other, finish = [], [], [], None
             http_status, err_body = None, None
             v2token = None
@@ -868,6 +875,7 @@ class ArenaEngine:
              "adaptive_interval_s": int(self.interval),
              "recaptcha_streak": self.recaptcha_streak,
              "security_check_required": self.security_blocked,
+             "budget": dict(self.budget, limit=self.cfg.DAILY_BUDGET),
              "paused": self.cooldown_until > time.time(),
              "queue": {"concurrency": self.cfg.MAX_CONCURRENCY,
                        "hits_in_window": len(self._hits),
@@ -903,6 +911,24 @@ class ArenaEngine:
             h["ok"] = False
             h["error"] = str(e)[:300]
         return h
+
+    def _budget_hit(self):
+        """Учесть реальное обращение к арене; при исчерпании бюджета — пауза до 04:00 UTC."""
+        import calendar
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if self.budget.get("day") != today:
+            self.budget = {"day": today, "used": 0}
+        self.budget["used"] += 1
+        lim = self.cfg.DAILY_BUDGET
+        if lim > 0 and self.budget["used"] >= lim:
+            t04 = calendar.timegm(time.strptime(today + " 04:00:00",
+                                                "%Y-%m-%d %H:%M:%S"))
+            until = t04 if time.time() < t04 else t04 + 86400
+            if until > self.cooldown_until:
+                self.cooldown_until = until
+                log.warning("дневной бюджет %d обращений исчерпан — пауза до 04:00 UTC",
+                            lim)
+        self._save_state()
 
     def _on_recaptcha_fail(self):
         """403 `recaptcha validation failed`: счётчики, нарастающий штраф, автоблокировка.

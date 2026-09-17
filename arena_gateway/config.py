@@ -70,6 +70,9 @@ PENALTY_MAX = _f("ARENA_GW_PENALTY_MAX", 7200)
 BLOCK_PAUSE = _f("ARENA_GW_BLOCK_PAUSE", 7200)
 # сколько отказов reCAPTCHA подряд считать флагом аккаунта (а не сбоем темпа)
 BLOCK_STREAK = int(_f("ARENA_GW_BLOCK_STREAK", 2))
+# дневной бюджет РЕАЛЬНЫХ обращений к арене (UTC-сутки); 0 = выключен.
+# Держит нас далеко от порога срабатывания reCAPTCHA даже при активных клиентах.
+DAILY_BUDGET = int(_f("ARENA_GW_DAILY_BUDGET", 40))
 BACKOFF_FACTOR = _f("ARENA_GW_BACKOFF", 2.0)
 RECOVER_FACTOR = _f("ARENA_GW_RECOVER", 0.9)
 

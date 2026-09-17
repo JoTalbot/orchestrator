@@ -145,6 +145,7 @@ cat /opt/orchestrator/data/arena/direct_models_verified.json | jq '.models | to_
 | эскалация reCAPTCHA v2 | выключена | `ARENA_GW_V2` |
 | имитация присутствия человека | вкл., каждые 120 с | `ARENA_GW_HUMANIZE`, `ARENA_GW_HUMANIZE_EVERY` |
 | автопауза при флаге аккаунта | 7200 с | `ARENA_GW_BLOCK_PAUSE` |
+| дневной бюджет обращений к арене | 40 / UTC-сутки | `ARENA_GW_DAILY_BUDGET` |
 | отказов reCAPTCHA подряд до автопаузы | 2 | `ARENA_GW_BLOCK_STREAK` |
 | одновременных запросов | 1 | `ARENA_GW_CONCURRENCY` |
 | ожидание токена reCAPTCHA | 20 с | `ARENA_GW_TOKEN_TIMEOUT` |
@@ -334,6 +335,18 @@ curl -s http://127.0.0.1:9700/v1/chat/completions -H "Authorization: Bearer $SHI
   -H 'content-type: application/json' \
   -d '{"model":"hermes-arena","messages":[{"role":"user","content":"Скажи ОК"}]}'
 ```
+
+**Дневной бюджет.** Каждый реальный запрос к арене учитывается в `budget`
+(`/health`, `/v1/arena/status`); при исчерпании `ARENA_GW_DAILY_BUDGET` шлюз сам
+встаёт в паузу до 04:00 UTC следующих суток. Бюджет переживает рестарт
+(`gateway_state.json`) и страховует от флагов даже при активных клиентах
+(Cursor/Hermes): 40 запросов в день — это заметно ниже порога срабатывания
+reCAPTCHA при нашем адаптивном темпе.
+
+**Ночное самовосстановление.** `arena-gateway-probe.timer` (04:30 UTC) проверяет
+модели, `arena-validate.timer` (04:50 UTC) прогоняет `validate.sh --quick`
+(лог — `data/arena/validate_daily.log`); оба пропускают ход, если шлюз в паузе
+или блокировке. Утром остаётся прочитать лог или `/v1/arena/status`.
 
 ### Сквозная валидация
 

@@ -838,11 +838,45 @@ class ArenaEngine:
             h["error"] = str(e)[:300]
         return h
 
+    async def humanize(self):
+        """Лёгкая имитация присутствия человека: движения мыши + небольшой скролл.
+
+        Только mouseMoved/scroll — никаких кликов и клавиш, чтобы не задеть UI.
+        """
+        if not self.cfg.HUMANIZE:
+            return
+        try:
+            import random
+            pts = await self.js("""(() => {
+              try { window.scrollBy({top: Math.round(Math.random()*80 - 40), behavior: 'smooth'}); } catch (e) {}
+              const w = window.innerWidth || 1280, h = window.innerHeight || 800;
+              const out = [];
+              let x = w * (0.3 + Math.random() * 0.4), y = h * (0.3 + Math.random() * 0.4);
+              for (let i = 0; i < 5; i++) {
+                x += (Math.random() - 0.5) * 220; y += (Math.random() - 0.5) * 160;
+                out.push([Math.max(20, Math.min(w - 20, x | 0)),
+                          Math.max(20, Math.min(h - 20, y | 0))]);
+              }
+              return JSON.stringify(out);
+            })()""", timeout=20)
+            for x, y in json.loads(pts or "[]"):
+                await self.tab.cmd("Input.dispatchMouseEvent",
+                                   {"type": "mouseMoved", "x": int(x), "y": int(y)})
+                await asyncio.sleep(0.12 + random.random() * 0.25)
+            self.counters["humanized"] += 1
+        except Exception as e:
+            log.debug("humanize: %s", e)
+
     async def watchdog(self):
         """Фоновая проверка: вкладка жива, страница отвечает, recaptcha на месте."""
+        last_human = 0.0
         while True:
             try:
                 await asyncio.sleep(self.cfg.HEALTH_INTERVAL)
+                if (self.cfg.HUMANIZE and self.tab and not self.tab.closed
+                        and time.time() - last_human > self.cfg.HUMANIZE_EVERY):
+                    last_human = time.time()
+                    await self.humanize()
                 try:
                     targets = {t.get("id"): t for t in self._cdp_targets()}
                 except Exception as e:

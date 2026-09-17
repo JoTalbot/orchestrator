@@ -51,6 +51,9 @@ TOTAL_TIMEOUT = _f("ARENA_GW_TOTAL", 300)
 POLL_INTERVAL = _f("ARENA_GW_POLL", 0.25)
 MAX_STREAM_BYTES = _i("ARENA_GW_MAX_BYTES", 8_000_000)
 HEALTH_INTERVAL = _f("ARENA_GW_HEALTH", 30)
+# «очеловечивание» вкладки: лёгкие движения мыши/скролл повышают оценку reCAPTCHA
+HUMANIZE = _b("ARENA_GW_HUMANIZE", True)
+HUMANIZE_EVERY = _f("ARENA_GW_HUMANIZE_EVERY", 120)
 
 # --- ретраи
 RETRIES_RECAPTCHA = _i("ARENA_GW_RETRY_RECAPTCHA", 0)   # ретраи в flagged-состоянии продлевают штраф

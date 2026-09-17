@@ -114,8 +114,11 @@ cat /opt/orchestrator/data/arena/direct_models_verified.json | jq '.models | to_
 
 | Параметр | По умолчанию | Переменная |
 |---|---|---|
-| интервал между запросами к арене | 20 с | `ARENA_GW_MIN_INTERVAL` |
-| всплеск | 8 запросов / 300 с | `ARENA_GW_BURST_LIMIT`, `ARENA_GW_BURST_WINDOW` |
+| интервал между запросами к арене | 45 с (адаптивно 45…900 с) | `ARENA_GW_MIN_INTERVAL` |
+| всплеск | 6 запросов / 900 с | `ARENA_GW_BURST_LIMIT`, `ARENA_GW_BURST_WINDOW` |
+| штрафной кулдаун после 403 | 1200 с | `ARENA_GW_PENALTY` |
+| эскалация reCAPTCHA v2 | выключена | `ARENA_GW_V2` |
+| имитация присутствия человека | вкл., каждые 120 с | `ARENA_GW_HUMANIZE`, `ARENA_GW_HUMANIZE_EVERY` |
 | одновременных запросов | 1 | `ARENA_GW_CONCURRENCY` |
 | ожидание токена reCAPTCHA | 20 с | `ARENA_GW_TOKEN_TIMEOUT` |
 | нет ответа (первый байт) | 60 с | `ARENA_GW_FIRST_BYTE` |
@@ -138,10 +141,25 @@ cat /opt/orchestrator/data/arena/direct_models_verified.json | jq '.models | to_
 | 404 `Models not found…` | модель не доступна в этой модальности → ошибка `model_not_found`/`upstream` клиенту |
 | таймаут/зависание | отмена задания в странице (`AbortController`), клиенту 504 |
 
-**Важно про кулдаун.** Серия из ~26 запросов с интервалом 3 с приводит к штрафному
-`retry-after` ≈ 1200 с (20 мин), хотя глобальный счётчик `ratelimit: limit=1800;w=300`
-далёк от исчерпания. Поэтому шлюз по умолчанию держит темп 20 с и не более 8 запросов
-в 5 минут.
+**Адаптивный темп.** Интервал стартует с `MIN_INTERVAL` (45 с), при успехе
+умножается на 0.9 (не ниже 45 с), при отказе reCAPTCHA — на 2 (до 900 с).
+Состояние (интервал, кулдаун, счётчики) сохраняется в `data/arena/gateway_state.json`
+и переживает рестарт сервиса.
+
+**Важно про кулдаун и reCAPTCHA.** Штрафной `retry-after` ≈ 1200 с прилетает не за
+исчерпание глобального счётчика `ratelimit: limit=1800;w=300`, а за оценку
+reCAPTCHA Enterprise: серия из ~3 запросов подряд с интервалом 20 с уже даёт 403.
+Флаг ставится **на аккаунт и держится десятки минут** (подтверждено 17.09.2026:
+403 и на наши запросы, и на штатный UI сайта спустя 30+ мин). Перезагрузка вкладки,
+новая вкладка или новый профиль страницы **не помогают**. Поэтому:
+
+* темп по умолчанию 45 с и не более 6 запросов в 15 минут;
+* после 403 — кулдаун `PENALTY` (1200 с), в это время шлюз отвечает 503 с `Retry-After`
+  за миллисекунды, не тратя попытки;
+* «очеловечивание» вкладки (движения мыши + микро-скролл каждые 120 с) повышает оценку
+  reCAPTCHA — включено по умолчанию;
+* эскалация v2 отключена: v2 выдаёт картинный челлендж (400×580), который автоматически
+  не решается.
 
 ## 5. Подключение клиентов
 
@@ -191,8 +209,30 @@ sudo systemctl restart octopus-aios.service hermes-shim.service
 ```
 
 Провайдер в `/opt/aios/llm/llm_balancer.py`:
-`OpenAICompatibleCloudProvider("arena-<slug>", "http://127.0.0.1:8791/v1", "<publicName>", keys, tier="arena", weight=…, timeout=150.0)`,
+`ArenaGatewayProvider("arena-<slug>", "http://127.0.0.1:8791/v1", "<publicName>", keys, tier="arena", weight=…, timeout=150.0)`,
 ключ — `ARENA_GATEWAY_KEY` в `/etc/octopus/secrets.env`.
+
+Две особенности класса `ArenaGatewayProvider` (добавляются тем же скриптом):
+
+* **`strict_tier = True`** — провайдер отвечает только на запросы своего тира.
+  Без этого балансировщик доходил до арены в общем фолбэке (за 25 минут — 7 вызовов)
+  и выжигал лимит reCAPTCHA. Фильтр в `LLMBalancer.ask()`:
+  `if getattr(provider, "strict_tier", False) and provider.tier != target_tier: continue`.
+* **`is_available()`** дополнительно опрашивает `/health` шлюза (кэш 60 с): во время
+  кулдауна или потери вкладки провайдер помечается `healthy: false`.
+
+Маршрутизация в Hermes (шим `/opt/hermes/deploy/shim/aios_openai_shim.py`):
+псевдоним `"hermes-arena": "arena"` в `TIER_BY_MODEL` и `"arena"` в `VALID_TIERS`.
+Шим шлёт `tier` в мост AIOS, мост передаёт его как `task_type` в `llm_balancer.ask()`.
+Если арена в кулдауне, балансировщик корректно уходит на фолбэк, а шим помечает
+несовпадение: `{"tier": "arena", "provider": "groq-gpt-oss-20b", "provider_tier": "fast"}`.
+
+```bash
+# проверить маршрутизацию
+curl -s http://127.0.0.1:9700/v1/chat/completions -H "Authorization: Bearer $SHIMKEY" \
+  -H 'content-type: application/json' \
+  -d '{"model":"hermes-arena","messages":[{"role":"user","content":"Скажи ОК"}]}'
+```
 
 ## 6. Отладка без HTTP
 
@@ -214,7 +254,9 @@ reasoning, tool calls, источники поиска, картинки).
 
 ## 7. Ограничения
 
-* Один запрос за раз и темп ≥ 20 с — иначе арена даёт штрафной кулдаун на ~20 минут.
+* Один запрос за раз и адаптивный темп ≥ 45 с — иначе арена даёт штрафной кулдаун
+  на ~20 минут, а флаг reCAPTCHA на аккаунте держится дольше (десятки минут).
+  Реалистичная пропускная способность шлюза: ~10–20 запросов в час.
 * Входные изображения (vision) пока не поддерживаются: нужен поток загрузки
   (`generateUploadUrl` → S3 → `metadata.uploads`); server action уже известен.
 * Не все модели каталога отвечают в direct-режиме: часть отдаёт 404/429/403.

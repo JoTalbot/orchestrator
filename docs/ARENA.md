@@ -446,13 +446,19 @@ UUID → точное `publicName` → псевдоним (`sonnet`, `haiku`, `f
   (sitekey `6Le3_cYs…`) и ретраит с `recaptchaV2Token`. У нас v2 сразу эскалирует
   в картинный челлендж (bframe 400×580) — автоматически не решается, поэтому
   `ARENA_GW_V2=false`.
-* Серия быстрых запросов (≈26 за 3 мин) даёт штраф: 403 `recaptcha validation failed`
+* Серия быстрых запросов даёт штраф: 403 `recaptcha validation failed`
   и 429 c `retry-after` ≈ 1200 с, хотя глобальный счётчик `ratelimit: limit=1800;w=300`
-  почти не потрачен. Перезагрузка страницы/новая вкладка штраф НЕ снимают.
+  почти не потрачен. Хватает ≈3 запросов подряд с интервалом 20 с.
+* Флаг ставится **на аккаунт и держится десятки минут**: 17.09.2026 спустя 30+ мин
+  после последнего запроса 403 получали и мы, и штатный UI сайта. Перезагрузка
+  страницы, новая вкладка и новый профиль — штраф НЕ снимают.
 * Поэтому шлюз держит темп 45 с (не более 6 за 15 мин), а после отказа уходит в
   штрафной кулдаун 1200 с и быстро отвечает 503 + `Retry-After` вместо выжигающих
   ретраев. Интервал адаптивный: отказ → ×2 (до 900 с), успех → ×0.9 (до 45 с).
   Состояние переживает перезапуск (`data/arena/gateway_state.json`).
+* «Очеловечивание» вкладки (движения мыши + микро-скролл каждые 120 с,
+  `ARENA_GW_HUMANIZE`) повышает оценку reCAPTCHA Enterprise. Реалистичная
+  пропускная способность шлюза — ~10–20 запросов в час.
 
 ### Вотчдоги
 
@@ -483,7 +489,21 @@ python3 arena_gateway/install_integrations.py         # применить (пр
 sudo systemctl restart octopus-aios.service hermes-shim.service
 ```
 
-В `llm_balancer.py` это `OpenAICompatibleCloudProvider("arena-<slug>",
-"http://127.0.0.1:8791/v1", "<publicName>", arena_keys, tier="arena", weight=…, timeout=150.0)`,
-ключ `ARENA_GATEWAY_KEY` в `/etc/octopus/secrets.env`; в `hermes-models.yaml` —
+В `llm_balancer.py` это `ArenaGatewayProvider("arena-<slug>", "http://127.0.0.1:8791/v1",
+"<publicName>", arena_keys, tier="arena", weight=…, timeout=150.0)`, ключ
+`ARENA_GATEWAY_KEY` в `/etc/octopus/secrets.env`; в `hermes-models.yaml` —
 псевдоним `hermes-arena` (тир `arena`).
+
+Класс `ArenaGatewayProvider` (вставляется тем же скриптом) даёт две защиты:
+
+* `strict_tier = True` — провайдер отвечает **только** на запросы своего тира, иначе
+  балансировщик доходит до арены в общем фолбэке и выжигает лимит reCAPTCHA
+  (без фильтра за 25 минут было 7 посторонних вызовов). Фильтр в `LLMBalancer.ask()`:
+  `if getattr(provider, "strict_tier", False) and provider.tier != target_tier: continue`.
+* `is_available()` опрашивает `/health` шлюза (кэш 60 с) — в кулдауне провайдер
+  помечается `healthy: false` в `/health` балансировщика.
+
+Цепочка маршрутизации Hermes: `hermes-arena` → шим (`TIER_BY_MODEL`, `VALID_TIERS`
+дополнены `"arena"`) → мост AIOS `/api/v1/aios/ask` (`tier` → `task_type`) →
+балансировщик (тир `arena`). Если арена недоступна, ответ приходит с фолбэка,
+а шим показывает расхождение: `{"tier":"arena","provider":"groq-gpt-oss-20b","provider_tier":"fast"}`.

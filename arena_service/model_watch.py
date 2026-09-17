@@ -189,7 +189,10 @@ def alert_text(res: dict, first: bool) -> str:
         if isinstance(m, dict):
             names.append("%s (%s)" % (m.get("publicName") or m.get("displayName"),
                                       str(m.get("id"))[:13]))
-    return ("\U0001F3AF Arena AI: выбор модели в Agent Mode СТАЛ ДОСТУПЕН\n"
+    head = ("\U0001F9EA ТЕСТ МОНАТОРА (имитация, не настоящее срабатывание)\n"
+            if res.get("simulated") else
+            "\U0001F3AF Arena AI: выбор модели в Agent Mode СТАЛ ДОСТУПЕН\n")
+    return (head +
             "флаг %s: %s\n"
             "GET /api/chat/agent-models → %s\n"
             "моделей: %d%s\n"
@@ -267,13 +270,15 @@ def main():
                     help="имитировать включение доступа и пройти весь путь алерта")
     ap.add_argument("--send-test", action="store_true",
                     help="послать тестовое уведомление и выйти")
+    ap.add_argument("--text", default=None, help="свой текст для --send-test")
     ap.add_argument("--quiet-ok", action="store_true",
                     help="не логировать проверки без изменений")
     a = ap.parse_args()
 
     if a.send_test:
         log("тестовое уведомление монитора выбора модели (arena-model-watch)")
-        print(notify("TEST: монитор arena-model-watch проверяет доставку. "
+        print(notify(a.text or
+                     "TEST: монитор arena-model-watch проверяет доставку. "
                      "Флаг %s пока не назначен, /api/chat/agent-models → 403." % FLAG))
         return
 

@@ -398,9 +398,22 @@ class ArenaEngine:
             return await self.tab.js(expr, timeout=timeout)
 
     async def start(self):
-        await self.ensure_tab()
+        # Watchdog создаётся ПЕРЕД первой попыткой поднять вкладку — и это принципиально.
+        #
+        # Раньше порядок был обратный, и если ensure_tab() падал (браузер ещё не
+        # поднялся), исключение уходило в _startup(), который его глотал, а watchdog
+        # не создавался вовсе. Шлюз оставался мёртвым навсегда: /health отдавал
+        # ok=false, tab=None, и ничего не пыталось переподключиться.
+        #
+        # Наблюдали вживую 19.09.2026: шлюз стартовал в 10:35:41, браузер поднялся
+        # в 10:35:47 — расхождение в 6 секунд оставило шлюз без вкладки навсегда.
+        #
+        # Первая итерация watchdog спит HEALTH_INTERVAL (30 с) до проверки,
+        # поэтому гонки с create_task нет, а исключение от ensure_tab по-прежнему
+        # видно в журнале старта.
         if not self._wd_task:
             self._wd_task = asyncio.create_task(self.watchdog())
+        await self.ensure_tab()
 
     async def stop(self):
         if self._wd_task:

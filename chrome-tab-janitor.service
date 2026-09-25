@@ -1,0 +1,8 @@
+[Unit]
+Description=Close orphaned arena.ai tabs in host-chrome-proxy (CDP :9222)
+After=host-chrome-proxy.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/usr/bin/python3 /opt/orchestrator/chrome_tab_janitor.py

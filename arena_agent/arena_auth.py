@@ -90,7 +90,7 @@ async def main():
         sys.exit(1)
     tab = Tab(pages[0]["webSocketDebuggerUrl"])
     await tab.connect()
-    ck = await tab.cmd("Network.getCookies", {"urls": ["https://arena.ai/"]})
+    ck = await tab.cmd("Network.getAllCookies", {})
     cookies = {c["name"]: c["value"]
                for c in ck.get("result", {}).get("cookies", [])}
     raw = collect_auth_cookie(cookies)

@@ -32,6 +32,7 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -81,14 +82,14 @@ async def get_api() -> ArenaAPI:
             return api
         except Exception:
             _state["api"] = None
-            if _state["tab"]:
-                try:
-                    await _state["tab"].close()
-                except Exception:
-                    pass
+            # ВАЖНО: tab.close() закрывает только websocket. Вкладку в браузере
+            # нужно закрывать отдельно, иначе каждая проверка здоровья плодит
+            # по вкладке arena.ai/agent (найдено 7 одинаковых).
+            await _close_tab(_state["tab"])
             _state["tab"] = None
     last = None
     for attempt in range(3):
+        tab = None
         try:
             tab = await connect(own=True, verbose=False)
             api = ArenaAPI(tab, verbose=False, own_tab=True)
@@ -97,8 +98,33 @@ async def get_api() -> ArenaAPI:
         except Exception as e:            # вкладка могла зависнуть на challenge
             last = e
             _state["tab"], _state["api"] = None, None
+            # вкладка уже создана в браузере — закрываем, иначе утекает
+            # по одной на каждую попытку (до трёх за цикл).
+            await _close_tab(tab)
             await asyncio.sleep(4 + 4 * attempt)
     raise RuntimeError("не удалось подключиться к браузеру: %s" % last)
+
+
+async def _close_tab(tab) -> None:
+    """Закрыть и websocket, и саму вкладку в браузере.
+
+    Без второго шага вкладка остаётся жить в host-chrome-proxy, а с ней
+    renderer и worker. Именно так в браузере накопились 7 одинаковых
+    arena.ai/agent при одном работающем сервисе.
+    """
+    if tab is None:
+        return
+    try:
+        await tab.close()
+    except Exception:
+        pass
+    target_id = getattr(tab, "target_id", None)
+    if not target_id:
+        return
+    try:
+        urllib.request.urlopen("http://127.0.0.1:9222/json/close/" + target_id, timeout=10)
+    except Exception:
+        pass
 
 
 @asynccontextmanager

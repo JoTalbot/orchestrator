@@ -162,8 +162,29 @@ async def main_async(args):
 
 async def run_export(args, data_dir):
     tab = await connect(verbose=args.verbose, own=not args.use_current_tab)
-    api = ArenaAPI(tab, verbose=args.verbose, own_tab=not args.use_current_tab)
+    # Своя вкладка должна закрываться при ЛЮБОМ выходе из функции, включая
+    # досрочный return у --only-meta (строка была: return -> вкладка оставалась)
+    # и падение конструктора API (раньше стоял до try).
+    api = None          # иначе finally словит UnboundLocalError, если конструктор упадёт
+    try:
+        api = ArenaAPI(tab, verbose=args.verbose, own_tab=not args.use_current_tab)
+        return await _run_export_body(api, args, data_dir)
+    finally:
+        if api is None:
+            # конструктор не отработал — вкладки уже нет в API, закрываем напрямую
+            try:
+                import urllib.request
+                if tab.target_id:
+                    urllib.request.urlopen("http://127.0.0.1:9222/json/close/"
+                                           + tab.target_id, timeout=10)
+                    log("вкладка закрыта напрямую (конструктор API не отработал)")
+            except Exception as ex:
+                log("не закрыл вкладку: %s" % ex)
+        else:
+            await api_close(api)
 
+
+async def _run_export_body(api, args, data_dir):
     me = await api.me()
     log("аккаунт: %s" % me.get("user", {}).get("email"))
     try:
@@ -232,7 +253,6 @@ async def run_export(args, data_dir):
                "messagesThisRun": total_msgs, "apiCalls": api.calls}
     save_json_atomic(data_dir / "summary.json", summary)
     log("готово: %s" % json.dumps(summary, ensure_ascii=False))
-    await api_close(api)
 
 
 def main():

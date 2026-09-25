@@ -243,7 +243,22 @@ async def probe(entries, chat_id):
     sys.path.insert(0, str(HERE))
     from arena_api import ArenaAPI, connect
     tab = await connect(own=True, verbose=True)
-    api = ArenaAPI(tab, verbose=False, own_tab=True)
+    # Вкладка своя — закрывать обязаны даже если конструктор API или
+    # зондирование упадут (конструктор раньше стоял до try: падал — вкладка текла).
+    import urllib.request
+    try:
+        api = ArenaAPI(tab, verbose=False, own_tab=True)
+        return await _probe_with(api, entries, chat_id)
+    finally:
+        if tab.target_id:
+            try:
+                urllib.request.urlopen("http://127.0.0.1:9222/json/close/"
+                                       + tab.target_id, timeout=10)
+            except Exception:
+                pass
+
+
+async def _probe_with(api, entries, chat_id):
     subs = {"{id}": chat_id, "{param}": "00000000-0000-0000-0000-000000000000",
             "{manifestNodeId}": "00000000-0000-0000-0000-000000000000",
             "{messageId}": "00000000-0000-0000-0000-000000000000"}
@@ -273,13 +288,6 @@ async def probe(entries, chat_id):
         print("  [%d] %-6s %-58s %s" % (n, e["method"], url[:58],
                                         e["probe"][:70]), flush=True)
         await asyncio.sleep(0.3)
-    import urllib.request
-    if tab.target_id:
-        try:
-            urllib.request.urlopen("http://127.0.0.1:9222/json/close/"
-                                   + tab.target_id, timeout=10)
-        except Exception:
-            pass
     return entries
 
 

@@ -62,6 +62,17 @@ def find_arena_tab():
     return None
 
 
+def close_tab(target_id) -> bool:
+    """Закрыть вкладку в браузере (не только websocket). Возвращает успех."""
+    if not target_id:
+        return False
+    try:
+        urllib.request.urlopen(CDP + "/json/close/" + target_id, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
 def open_arena_tab(url=ORIGIN + "/agent"):
     """Открыть вкладку arena.ai (нужна, если в браузере её нет)."""
     req = urllib.request.Request(

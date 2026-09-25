@@ -43,7 +43,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "arena_agent"))
-from arena_api import ArenaAPI, connect, light_message  # noqa: E402
+from arena_api import ArenaAPI, connect, light_message, unpack_rsc, parse_transcript  # noqa: E402
 
 ROOT = Path("/opt/orchestrator")
 
@@ -87,6 +87,9 @@ def already_done(index_entry, data_dir: Path, force: bool, skip_existing: bool):
         return False
     try:
         d = json.loads(p.read_text())
+        light = json.loads((data_dir / "light" / p.name).read_text())
+        if light.get("id") != d.get("id"):
+            return False
     except Exception:
         return False                      # битый файл — перекачаем
     if not d.get("id"):
@@ -130,7 +133,18 @@ class Lock:
 async def export_one(api: ArenaAPI, entry, data_dir: Path):
     cid = entry["id"]
     t0 = time.time()
-    tr = await api.transcript_full(cid, limit=50)
+    if entry.get("type") == "evaluation":
+        response = await api.fetch("GET", "/c/" + cid,
+                                   headers={"accept": "text/html"})
+        if response.get("status") != 200:
+            raise RuntimeError("evaluation page HTTP %s" % response.get("status"))
+        tr = parse_transcript(unpack_rsc(response.get("body", "")))
+        if tr is None:
+            raise RuntimeError("evaluation transcript not found; refusing empty export")
+        if (tr.get("pagination") or {}).get("hasMore"):
+            raise RuntimeError("evaluation transcript requires pagination; refusing partial export")
+    else:
+        tr = await api.transcript_full(cid, limit=50)
     msgs = tr.get("messages") or []
     full = {
         "id": cid,

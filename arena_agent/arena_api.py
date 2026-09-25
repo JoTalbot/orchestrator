@@ -183,13 +183,16 @@ def parse_transcript(blob: str):
             return [resolve(x, depth + 1) for x in v]
         return v
 
+    # RSC may place transcript objects inside text rows, and JSON field
+    # order can change. Decode candidate objects rather than requiring
+    # messages to be the first key. Ignore translation dictionaries.
     best = None
-    for m in re.finditer(r'\{"messages":\[', blob):
+    for match in re.finditer(r"\{", blob):
         try:
-            obj, _ = _DEC.raw_decode(blob, m.start())
-        except Exception:
+            obj, _ = _DEC.raw_decode(blob, match.start())
+        except (ValueError, RecursionError):
             continue
-        if isinstance(obj, dict) and "messages" in obj:
+        if isinstance(obj, dict) and isinstance(obj.get("messages"), list):
             if best is None or len(obj["messages"]) > len(best["messages"]):
                 best = obj
     if best is None:
@@ -454,8 +457,8 @@ class ArenaAPI:
     async def transcript_full(self, chat_id, limit=50, max_pages=200):
         """Весь транскрипт: последняя страница + все более ранние."""
         latest, _ = await self.transcript_latest(chat_id)
-        if not latest:
-            return {"messages": [], "pagination": None, "session": None}
+        if latest is None:
+            raise RuntimeError("transcript not found; refusing empty export")
         pages = [latest.get("messages", [])]
         pg = latest.get("pagination") or {}
         cursor = pg.get("cursor")
@@ -1052,9 +1055,9 @@ def light_message(m):
     for p in m.get("parts") or []:
         t = p.get("type")
         if t == "text":
-            out["text"].append(p.get("text") or "")
+            out["text"].append(str(p.get("text")) if p.get("text") is not None else "")
         elif t == "reasoning":
-            out.setdefault("reasoning", []).append((p.get("text") or "")[:2000])
+            out.setdefault("reasoning", []).append((str(p.get("text")) if p.get("text") is not None else "")[:2000])
         elif isinstance(t, str) and t.startswith("tool-"):
             inp = json.dumps(p.get("input"), ensure_ascii=False)[:600]
             o = p.get("output")

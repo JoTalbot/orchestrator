@@ -69,6 +69,8 @@ def make_fake_api(ctor_raises, me_raises, fetch_raises):
 
     mod.CDPTab, mod.ArenaAPI = CDPTab, ArenaAPI
     mod.connect, mod.light_message = connect, light_message
+    mod.unpack_rsc = lambda html: html
+    mod.parse_transcript = lambda blob: None
     sys.modules["arena_api"] = mod
     return mod
 

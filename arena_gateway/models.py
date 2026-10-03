@@ -5,19 +5,25 @@ MODALITIES = ("chat", "webdev", "search", "image", "video", "p2l", "audio", "aut
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _BIG = 9_007_199_254_740_991
 
-# короткие псевдонимы → publicName (расширяется файлом data/arena/model_aliases.json)
+# короткие псевдонимы → publicName (расширяется файлом data/arena/model_aliases.json).
+# Сверено с каталогом от 03.10.2026 (292 модели). Арена удаляет старые модели и
+# ПЕРЕИСПОЛЬЗУЕТ их UUID, поэтому псевдоним обязан вести на существующее имя:
+# claude-sonnet-4-5-20250929 убрали, её место (и «короткое имя» claude) заняла
+# claude-sonnet-5. Алиасы со старыми именами оставлены для совместимости
+# клиентов и указывают на актуальную модель — иначе resolve вернёт «не найдено».
 ALIASES = {
-    "claude": "claude-sonnet-4-5-20250929",
-    "sonnet": "claude-sonnet-4-5-20250929",
-    "claude-sonnet": "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+    "claude": "claude-sonnet-5",
+    "sonnet": "claude-sonnet-5",
+    "claude-sonnet": "claude-sonnet-5",
+    "claude-sonnet-4.5": "claude-sonnet-5",
+    "claude-sonnet-4-5": "claude-sonnet-5",
+    "claude-sonnet-5.5": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
     "max": "Max",
     "flux": "flux-2-pro",
     "gemini": "gemini-3.1-pro-preview",
     "gpt": "gpt-5.2-high",
-    "grok": "grok-4.5-search",
+    "grok": "grok-4.20-beta-0309-reasoning",
 }
 
 
@@ -56,8 +62,27 @@ class Model:
         return min(self.ranks.values()) if self.ranks else _BIG
 
     def supports(self, modality):
-        if not modality or modality in ("auto", "chat"):
+        """Умеет ли модель этот режим.
+
+        Важно: в каталоге арены `rankByModality` есть далеко не у всех записей,
+        а часть моделей умеет только одно (video/search/image). Раньше для chat
+        фильтра не было вовсе, и пробник гонял видео-модель lhotse
+        (`dreamina-seedance-2.5-720p`) в режиме чата — арена отвечала
+        400 «Chosen Model(s) are no longer available», что выглядело как
+        «устаревший каталог». Ориентир — capabilities.outputCapabilities
+        (в каталоге 03.10.2026: text ⇔ chat-ранг, 128 моделей).
+        """
+        if not modality or modality in ("auto",):
             return True
+        modality = modality.lower()
+        if modality == "chat":
+            return bool(self.caps_out.get("text")) or "chat" in self.ranks
+        if modality == "search":
+            return bool(self.caps_out.get("search")) or "search" in self.ranks
+        if modality in ("image", "video", "audio"):
+            return bool(self.caps_out.get(modality)) or modality in self.ranks
+        if modality == "webdev":
+            return "webdev" in self.ranks or bool(self.caps_out.get("web"))
         return modality in self.ranks
 
     def to_openai(self):
@@ -130,8 +155,10 @@ class Registry:
     # -------------------------------------------------------------- resolving
     def _candidates(self, modality=None):
         out = [m for m in self.models if m.selectable]
-        if modality and modality not in ("auto", "chat"):
-            out = [m for m in out if modality in m.ranks]
+        if modality and modality not in ("auto",):
+            sub = [m for m in out if m.supports(modality)]
+            if sub:            # пустой список лучше не отдавать: ищем по всему каталогу
+                out = sub
         return out
 
     def resolve(self, query, modality=None):
@@ -156,21 +183,43 @@ class Registry:
 
         nq = _norm(q)
         pool = self._candidates(modality) or self.models
+        explicit = modality != "chat" or ":" in q   # модальность названа явно?
 
-        # 2) точное совпадение
-        for m in pool:
-            if _norm(m.public_name) == nq or _norm(m.name) == nq:
-                return m, modality, None
+        def unfit(m):
+            """Модель есть в каталоге, но не умеет запрошенный режим.
+
+            Если режим не называли явно и модель умеет ровно один — не отказываем,
+            а переключаемся на него (так «flux» → flux-2-pro [image], «lhotse» →
+            lhotse [video]). Иначе отказ с подсказкой, какую модальность просить:
+            молчаливая подмена хуже понятной ошибки.
+            """
+            if not explicit and m.modalities and not m.supports("chat"):
+                return m, m.modalities[0], None
+            md = ", ".join(m.modalities) or "?"
+            return (None, modality,
+                    "модель '%s' не умеет %s (умеет: %s) — добавьте суффикс :%s"
+                    % (m.public_name, modality, md, md.split(",")[0].strip()))
+
+        # 2) точное совпадение (при дублях publicName — проверенная, затем лучшая
+        #    по рангу: у арены бывает по 2–3 записи с одинаковым publicName)
+        exact = [m for m in pool if _norm(m.public_name) == nq or _norm(m.name) == nq]
+        if exact:
+            exact.sort(key=lambda m: (not m.verified, m.best_rank))
+            return exact[0], modality, None
         m = self.by_norm.get(nq)
         if m:
-            return m, modality, None
+            return (m, modality, None) if m.supports(modality) else unfit(m)
 
-        # 3) псевдонимы
+        # 3) псевдонимы: сначала в нужной модальности, потом в целом каталоге
         alias = self.aliases.get(q.lower()) or self.aliases.get(nq)
         if alias:
+            na = _norm(alias)
             for m in pool:
-                if _norm(m.public_name) == _norm(alias):
+                if _norm(m.public_name) == na:
                     return m, modality, None
+            for m in self.models:
+                if _norm(m.public_name) == na:
+                    return (m, modality, None) if m.supports(modality) else unfit(m)
 
         # 4) частичное совпадение: сначала verified, потом ранг
         def score(m):

@@ -44,6 +44,7 @@ async def main():
     p.add_argument("--models"); p.add_argument("--modality", default="chat")
     p = sub.add_parser("v2")
     p = sub.add_parser("cleanup"); p.add_argument("eval_id")
+    sub.add_parser("prune-verified")
     a = ap.parse_args()
 
     reg = Registry(C.CATALOG, C.VERIFIED, os.path.join(C.DATA_DIR, "model_aliases.json"))
@@ -144,8 +145,8 @@ async def main():
             by_prov = collections.defaultdict(list)
             for m in reg.models:
                 if not m.selectable: continue
-                if a.modality not in m.ranks: continue
-                by_prov[m.provider or m.organization or "?"].append(m)
+                if not m.supports(a.modality): continue   # см. comments в app.py
+                by_prov[m.organization or m.provider or "?"].append(m)
             cases = []
             for prov, lst in by_prov.items():
                 lst.sort(key=lambda x: x.best_rank)
@@ -181,6 +182,39 @@ async def main():
                       open(C.VERIFIED, "w"), ensure_ascii=False, indent=1)
         print("\nработают %d из %d → %s" % (ok, len(cases), C.VERIFIED))
         await eng.stop()
+        return
+
+    if a.cmd == "prune-verified":
+        # «Проверено» хранится по id, а каталог арены живой: модели исчезают и
+        # переименовываются, id может достаться другой модели. Чистим записи,
+        # которых нет в текущем каталоге, и те, где имя разошлось с каталогом.
+        path = C.VERIFIED
+        if not os.path.exists(path):
+            print("проверенных ещё нет:", path); return
+        recs = json.load(open(path))
+        models_map = recs.get("models") or {}
+        from models import _norm as _n
+        alive, dead = {}, {}
+        for mid, rec in models_map.items():
+            m = reg.by_id.get(mid)
+            if m is None:
+                dead[mid] = (rec, "в каталоге нет")
+            elif isinstance(rec, dict) and rec.get("name") \
+                    and _n(rec["name"]) not in (_n(m.public_name), _n(m.name)):
+                dead[mid] = (rec, "имя разошлось: было '%s', стало '%s'"
+                             % (rec["name"], m.public_name))
+            else:
+                alive[mid] = rec
+        for mid, (rec, why) in dead.items():
+            print("выкидываю %s (%s) — %s"
+                  % (mid, (rec or {}).get("name") if isinstance(rec, dict) else "?", why))
+        if dead:
+            os.replace(path, path + ".bak")
+            recs["models"] = alive
+            recs["prunedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            json.dump(recs, open(path, "w"), ensure_ascii=False, indent=1)
+        print("осталось проверенных: %d (было %d), в каталоге моделей %d"
+              % (len(alive), len(models_map), len(reg.models)))
         return
 
     if a.cmd == "v2":

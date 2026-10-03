@@ -194,6 +194,31 @@ async def case_prompt_block_streak():
     print("10. пауза снята вручную: кулдаун 0, серия обнулена")
 
 
+def case_supports():
+    """Модальность: каталог арены смешанный, «чат» обязан требовать текстовый вывод.
+
+    Реальный случай 03.10.2026: lhotse — это видео-модель (dreamina-seedance),
+    в chat-пробнике арена отвечала 400 «Chosen Model(s) are no longer available»,
+    а выглядело это как устаревший каталог.
+    """
+    from models import Model
+    video = Model({"id": "v", "publicName": "lhotse", "userSelectable": True,
+                   "capabilities": {"outputCapabilities": {"video": True},
+                                    "inputCapabilities": {"text": True}},
+                   "rankByModality": {"video": 7}})
+    chat = Model({"id": "c", "publicName": "claude-sonnet-5", "userSelectable": True,
+                  "capabilities": {"outputCapabilities": {"text": True, "web": True}},
+                  "rankByModality": {"chat": 12}})
+    search = Model({"id": "s", "publicName": "grok-4.5-search", "userSelectable": True,
+                    "capabilities": {"outputCapabilities": {"search": True}},
+                    "rankByModality": {"search": 5}})
+    assert chat.supports("chat") and not video.supports("chat"), "chat-фильтр"
+    assert video.supports("video") and not chat.supports("video"), "video-фильтр"
+    assert search.supports("search") and not search.supports("chat"), "search-фильтр"
+    assert chat.supports("auto") and chat.supports(None), "auto пропускает всех"
+    print("11. модальности: видео-модель не идёт в chat, search — только в search")
+
+
 def main():
     import time as _t
     globals()["time"] = _t
@@ -203,6 +228,7 @@ def main():
     asyncio.run(case_budget_rollover())
     asyncio.run(case_state_sync())
     asyncio.run(case_prompt_block_streak())
+    case_supports()
     print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
     return 0
 

@@ -454,17 +454,28 @@ async def _run_probe(limit, per_provider, modality, ids):
             for m in registry.models:
                 if not m.selectable:
                     continue
-                if modality != "chat" and modality not in m.ranks:
+                # Модальность проверяем по capabilities, а не «есть хоть какие-то
+                # ранги»: иначе в chat-пробник попадают видео- и search-модели
+                # (lhotse = dreamina-seedance, claude-sonnet-4-6-search), и арена
+                # отвечает 400 «Chosen Model(s) are no longer available».
+                if not m.supports(modality):
                     continue
-                if modality == "chat" and not m.ranks:
-                    continue
-                by_prov[m.provider or m.organization or "?"].append(m)
+                # provider у арены технический (openaiResponses, googleVertexGlobal…),
+                # поэтому «1 модель на провайдера» группируем по бренду-организации
+                by_prov[m.organization or m.provider or "?"].append(m)
             cases = []
             for prov, lst in by_prov.items():
                 lst.sort(key=lambda x: x.best_rank)
                 cases.extend(lst[:per_provider])
             cases.sort(key=lambda x: x.best_rank)
             cases = cases[:limit]
+        if time.time() < engine.cooldown_until:
+            left_s = int(engine.cooldown_until - time.time())
+            PROBE_STATE["error"] = ("шлюз на паузе ещё %d с (флаг аккаунта/кулдаун) — "
+                                    "пробник не запускаю: каждая попытка продлевает флаг"
+                                    % left_s)
+            log.warning("пробник пропущен: пауза ещё %d с", left_s)
+            return
         # Бюджет дня принадлежит клиентам: пробник не тратит последние N обращений
         # и не запускает больше моделей, чем осталось с учётом резерва.
         reserve = int(getattr(C, "PROBE_BUDGET_RESERVE", 10))

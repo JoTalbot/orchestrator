@@ -250,7 +250,9 @@ class ArenaEngine:
         self.page_url = None
         self.interval = cfg.MIN_INTERVAL      # адаптивный интервал
         self._state_saved = 0.0
+        self.pending_cleanup = []      # id чатов, которые не удалось закрыть
         self._load_state()
+        self._load_pending_cleanup()
         self.actions = load_server_actions(
             os.path.join(cfg.DATA_DIR, "server_actions.json"))
 
@@ -278,6 +280,43 @@ class ArenaEngine:
             self.interval = min(iv, self.cfg.MAX_INTERVAL)
         for k, v in (d.get("counters") or {}).items():
             self.counters[k] = v
+
+    def _load_pending_cleanup(self):
+        """Очередь невыполненных удалений: если cleanup не прошёл, чат остаётся
+        в аккаунте и копится. Список переживает рестарт и повторяется позже."""
+        try:
+            d = json.load(open(self.cfg.CLEANUP_PENDING))
+            if isinstance(d, list):
+                self.pending_cleanup = [str(x) for x in d][:500]
+        except Exception:
+            pass
+
+    def _save_pending_cleanup(self):
+        try:
+            os.makedirs(os.path.dirname(self.cfg.CLEANUP_PENDING), exist_ok=True)
+            tmp = self.cfg.CLEANUP_PENDING + ".tmp"
+            json.dump(self.pending_cleanup[-500:], open(tmp, "w"))
+            os.replace(tmp, self.cfg.CLEANUP_PENDING)
+        except Exception as e:
+            log.warning("не сохранил очередь cleanup: %s", e)
+
+    async def retry_pending_cleanup(self, limit=2):
+        """Повторить невыполненные удаления (не чаще, чем по одному разу за вызов).
+        Вызывается после успешных запросов — так очередь разгребается сама."""
+        if not self.pending_cleanup or self.cfg.CLEANUP_MODE == "none":
+            return 0
+        done = 0
+        for eval_id in list(self.pending_cleanup[:limit]):
+            try:
+                r = await self.cleanup(eval_id, record=False)
+            except Exception as e:
+                log.warning("повтор cleanup %s: %s", eval_id, str(e)[:120])
+                break
+            if isinstance(r, dict) and r.get("status") in (200, 204):
+                done += 1
+                self.counters["cleanup_retried"] += 1
+        self._save_pending_cleanup()
+        return done
 
     def _save_state(self, force=False):
         now = time.time()
@@ -596,8 +635,15 @@ class ArenaEngine:
             data = rest
         return {"slot": slot, "code": code, "data": data}
 
-    async def _run_job(self, endpoint, payload, v2token=None, total_deadline=None):
-        """Запуск запроса в странице + опрос. → async generator событий."""
+    async def _run_job(self, endpoint, payload, v2token=None, total_deadline=None,
+                       max_ms=None, no_data_timeout=None):
+        """Запуск запроса в странице + опрос. → async generator событий.
+
+        max_ms — сколько ждём сам поток в странице (по умолчанию TOTAL_TIMEOUT);
+        no_data_timeout — сколько ждём данные ПОСЛЕ полученного HTTP-статуса.
+        Без этого второго вотчдога запрос, у которого статус пришёл, а дельт нет,
+        висел до общего дедлайна (300 с) — так и появлялись шесть 504 подряд в пробнике.
+        """
         job_id = uuid7()
         cfgjs = {
             "jobId": job_id,
@@ -608,7 +654,7 @@ class ArenaEngine:
             "action": self.cfg.RECAPTCHA_ACTION,
             "tokenTimeoutMs": int(self.cfg.TOKEN_TIMEOUT * 1000),
             "maxBytes": self.cfg.MAX_STREAM_BYTES,
-            "maxMs": int(self.cfg.TOTAL_TIMEOUT * 1000),
+            "maxMs": int(max_ms or self.cfg.TOTAL_TIMEOUT * 1000),
         }
         if v2token:
             cfgjs["v2token"] = v2token
@@ -626,7 +672,7 @@ class ArenaEngine:
                     await self.js("window.__agwCancel(%s)" % json.dumps(job_id), timeout=15)
                     raise ArenaError(504, "timeout",
                                      "превышено общее время ответа (%d с)"
-                                     % int(self.cfg.TOTAL_TIMEOUT))
+                                     % int(eff_total))
                 await asyncio.sleep(self.cfg.POLL_INTERVAL)
                 raw = await self.js("window.__agwPoll(%s, %d)" % (json.dumps(job_id), pos),
                                     timeout=30)
@@ -672,6 +718,12 @@ class ArenaEngine:
                     raise ArenaError(504, "no_response",
                                      "арена не ответила за %d с"
                                      % int(self.cfg.FIRST_BYTE_TIMEOUT))
+                no_data = no_data_timeout or self.cfg.NO_DATA_TIMEOUT
+                if first_byte_at is None and status_seen is not None and now - t0 > no_data:
+                    await self.js("window.__agwCancel(%s)" % json.dumps(job_id), timeout=15)
+                    raise ArenaError(504, "no_data",
+                                     "арена отдала статус %s, но данных нет %d с"
+                                     % (status_seen, int(no_data)))
                 if first_byte_at and now - last_data_at > self.cfg.STREAM_IDLE_TIMEOUT:
                     await self.js("window.__agwCancel(%s)" % json.dumps(job_id), timeout=15)
                     raise ArenaError(504, "stream_stalled",
@@ -697,7 +749,8 @@ class ArenaEngine:
     # ------------------------------------------------------------ главный вызов
     async def evaluate(self, *, model_id, prompt, modality="chat",
                        mode="direct-battle", session_id=None, extra=None,
-                       wait_budget=None, collect=True):
+                       wait_budget=None, collect=True, deadline_s=None,
+                       no_data_s=None):
         """
         Один запрос к арене. Возвращает dict:
         {ok, text, reasoning, parts, finish_reason, eval_id, status, ms,
@@ -722,7 +775,8 @@ class ArenaEngine:
         if extra:
             payload.update(extra)
 
-        total_deadline = time.time() + self.cfg.TOTAL_TIMEOUT + 30
+        eff_total = float(deadline_s or self.cfg.TOTAL_TIMEOUT)
+        total_deadline = time.time() + eff_total + 30
         attempt_v2 = False
         last = None
         for attempt in range(1 + self.cfg.RETRIES_PROMPT_FAILED + (1 if self.cfg.V2_ENABLED else 0)):
@@ -738,7 +792,9 @@ class ArenaEngine:
                                      "не удалось решить reCAPTCHA v2 (эскалация арены)")
             try:
                 async for ev in self._run_job(endpoint, payload, v2token=v2token,
-                                              total_deadline=total_deadline):
+                                              total_deadline=total_deadline,
+                                              max_ms=int(eff_total * 1000),
+                                              no_data_timeout=no_data_s):
                     t = ev["type"]
                     if t == "http":
                         http_status = ev["status"]
@@ -860,8 +916,12 @@ class ArenaEngine:
         except Exception:
             return {"status": 0, "body": str(raw)[:300]}
 
-    async def cleanup(self, eval_id, kind="evaluation"):
-        """Закрыть чат арены после ответа: удалить или архивировать."""
+    async def cleanup(self, eval_id, kind="evaluation", record=True):
+        """Закрыть чат арены после ответа: удалить или архивировать.
+
+        record=True — неудача попадает в очередь повторов (pending_cleanup);
+        record=False — вызов из повтора, чтобы не добавлять запись дважды.
+        """
         if not self.cfg.CLEANUP or self.cfg.CLEANUP_MODE == "none" or not eval_id:
             return {"skipped": True}
         if self.cfg.CLEANUP_MODE == "archive":
@@ -876,8 +936,15 @@ class ArenaEngine:
                 r = await self.fetch_json("DELETE", "/api/chat/%s" % eval_id)
         ok = isinstance(r, dict) and r.get("status") in (200, 204)
         self.counters["cleanup_ok" if ok else "cleanup_fail"] += 1
-        if not ok:
+        if ok:
+            if eval_id in self.pending_cleanup:
+                self.pending_cleanup.remove(eval_id)
+                self._save_pending_cleanup()
+        else:
             log.warning("cleanup %s не удался: %s", eval_id, str(r)[:200])
+            if record and eval_id not in self.pending_cleanup:
+                self.pending_cleanup.append(eval_id)
+                self._save_pending_cleanup()
         return r
 
     async def health(self, deep=False):
@@ -897,6 +964,7 @@ class ArenaEngine:
                        "min_interval_s": self.cfg.MIN_INTERVAL,
                        "current_interval_s": int(self.interval)},
              "counters": dict(self.counters),
+             "cleanup_pending": len(self.pending_cleanup),
              "unknown_stream_codes": dict(self.unknown_codes),
              "last_success": time.strftime("%H:%M:%S", time.localtime(self.last_success))
              if self.last_success else None,

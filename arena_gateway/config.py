@@ -81,10 +81,22 @@ CLEANUP = _b("ARENA_GW_CLEANUP", True)
 CLEANUP_MODE = os.environ.get("ARENA_GW_CLEANUP_MODE", "delete")   # delete | archive | none
 
 # --- данные
+# --- пробник моделей: не должен выедать бюджет клиентов и висеть по 300 с
+# Сколько секунд даём одной модели в пробнике (после — быстрый 504 вместо ожидания TOTAL).
+PROBE_DEADLINE = _f("ARENA_GW_PROBE_DEADLINE", 90)
+# Для видео/аудио/картинок генерация дольше: отдельный, более щедрый лимит.
+PROBE_DEADLINE_AV = _f("ARENA_GW_PROBE_DEADLINE_AV", 240)
+# Последние N обращений дня не тратим на пробник — они принадлежат клиентам.
+PROBE_BUDGET_RESERVE = _i("ARENA_GW_PROBE_RESERVE", 10)
+# Вотчдог «статус пришёл, данных нет»: без него запрос висел до TOTAL_TIMEOUT,
+# потому что проверка первого байта срабатывала только когда статуса ещё не было.
+NO_DATA_TIMEOUT = _f("ARENA_GW_NO_DATA", 60)
+
 DATA_DIR = os.environ.get("ARENA_GW_DATA", "/opt/orchestrator/data/arena")
 CATALOG = os.path.join(DATA_DIR, "models_catalog.json")
 VERIFIED = os.path.join(DATA_DIR, "direct_models_verified.json")
 STATE = os.path.join(DATA_DIR, "gateway_state.json")
+CLEANUP_PENDING = os.path.join(DATA_DIR, "cleanup_pending.json")
 LOG_DIR = os.environ.get("ARENA_GW_LOGDIR", "/opt/orchestrator/logs")
 
 # --- авторизация

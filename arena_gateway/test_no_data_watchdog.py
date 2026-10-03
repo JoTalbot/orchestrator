@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Офлайн-проверка вотчдогов и очереди cleanup шлюза. Арену не трогает.
+
+Проверяем ровно те два дефекта, из-за которых 02.10.2026 пробник моделей
+сжёг дневной бюджет шестью запросами по 300 с:
+
+1. «статус пришёл, данных нет» — раньше проверка первого байта срабатывала
+   только когда HTTP-статуса ещё не было, а вотчдог простоя — только после
+   первого байта. Запрос между ними висел до общего дедлайна. Теперь есть
+   NO_DATA_TIMEOUT.
+2. невыполненные удаления чатов копились (cleanup_fail 67) — теперь они
+   попадают в очередь повторов и разгребаются после следующих запросов.
+
+Запуск:  python3 arena_gateway/test_no_data_watchdog.py
+"""
+import asyncio
+import json
+import os
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "arena_agent"))
+
+import config as C  # noqa: E402
+
+TMP = tempfile.mkdtemp(prefix="agw-test-")
+C.STATE = os.path.join(TMP, "state.json")
+C.CLEANUP_PENDING = os.path.join(TMP, "cleanup_pending.json")
+C.VERIFIED = os.path.join(TMP, "verified.json")
+C.DATA_DIR = TMP
+
+from engine import ArenaEngine, ArenaError  # noqa: E402
+
+
+class FakeTab:
+    """Подменяет движок: отвечает как страница, без CDP и без арены."""
+
+    def __init__(self, script):
+        self.script = script          # список ответов __agwPoll по порядку
+        self.calls = []
+        self.poll = 0
+
+    async def _install_js(self):
+        return "ok"
+
+    async def js(self, expr, timeout=120):
+        self.calls.append(expr)
+        if "__agwStart" in expr:
+            return "ok"
+        if "__agwPoll" in expr:
+            if self.poll < len(self.script):
+                out = self.script[self.poll]
+                self.poll += 1
+                return json.dumps(out)
+            return json.dumps(self.script[-1])
+        return "ok"                    # __agwCancel / __agwFree / __agwAction
+
+
+def engine_with(script):
+    eng = ArenaEngine(C)
+    eng._install_js = script._install_js
+    eng.js = script.js
+    eng.ensure_tab = lambda *a, **k: asyncio.sleep(0)
+    return eng
+
+
+async def case_no_data():
+    """Статус 200 пришёл, дельты не идут → быстрый 504 no_data, а не 300 с."""
+    tab = FakeTab([{"status": 200, "len": 0, "chunk": "", "done": False}])
+    eng = engine_with(tab)
+    t0 = asyncio.get_event_loop().time()
+    try:
+        async for _ in eng._run_job("/nextjs-api/stream/create-evaluation", {},
+                                    total_deadline=time.time() + 300,
+                                    no_data_timeout=0.6):
+            pass
+        raise AssertionError("ожидали ArenaError")
+    except ArenaError as e:
+        took = asyncio.get_event_loop().time() - t0
+        assert e.code == "no_data", "код ошибки: %s" % e.code
+        assert took < 5, "вотчдог не сработал быстро: %.1f с" % took
+        assert any("__agwCancel" in c for c in tab.calls), "задание не отменено"
+        print("1. «статус есть, данных нет» → 504 %s за %.1f с (отмена задания отправлена)"
+              % (e.code, took))
+
+
+async def case_stream_ok():
+    """Нормальный поток: дельты и finish — ошибок нет."""
+    tab = FakeTab([
+        {"status": 200, "len": 0, "chunk": "", "done": False},
+        {"status": 200, "len": 8, "chunk": 'a0:"ОК"\n', "done": False},
+        {"status": 200, "len": 24, "chunk": 'ad:{"finishReason"}\n',
+         "done": True, "ms": 900, "len": 24},
+    ])
+    eng = engine_with(tab)
+    parts = []
+    async for ev in eng._run_job("/nextjs-api/stream/create-evaluation", {},
+                                 total_deadline=time.time() + 30, no_data_timeout=1):
+        parts.append(ev.get("type"))
+    assert "first_byte" in parts and "part" in parts and "job_done" in parts, parts
+    print("2. нормальный поток: события %s" % ", ".join(parts))
+
+
+async def case_cleanup_queue():
+    """Неудачное удаление чата попадает в очередь, успех — убирает из неё."""
+    eng = ArenaEngine(C)
+    fails = {"n": 0}
+
+    async def fake_action(name, args, path=None):
+        fails["n"] += 1
+        return {"status": 500, "body": "boom"} if fails["n"] == 1 else {"status": 200}
+
+    eng.server_action = fake_action
+    await eng.cleanup("eval-1")
+    assert eng.pending_cleanup == ["eval-1"], eng.pending_cleanup
+    assert os.path.exists(C.CLEANUP_PENDING), "очередь не сохранилась на диск"
+    print("3. неудача cleanup → в очереди: %s (файл записан)" % eng.pending_cleanup)
+
+    done = await eng.retry_pending_cleanup(limit=2)
+    assert done == 1 and eng.pending_cleanup == [], (done, eng.pending_cleanup)
+    print("4. повтор cleanup → очередь пуста (удалено записей: %d)" % done)
+
+    eng2 = ArenaEngine(C)              # переживает рестарт: читаем с диска
+    await eng2.cleanup("eval-2")
+    eng3 = ArenaEngine(C)
+    eng3.server_action = fake_action
+    print("5. очередь читается после перезапуска движка: %s" % eng3.pending_cleanup)
+    assert eng3.pending_cleanup == ["eval-2"], eng3.pending_cleanup
+
+
+def main():
+    import time as _t
+    globals()["time"] = _t
+    asyncio.run(case_no_data())
+    asyncio.run(case_stream_ok())
+    asyncio.run(case_cleanup_queue())
+    print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

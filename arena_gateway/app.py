@@ -261,7 +261,7 @@ async def images_generations(request: Request):
         imgs = extract_images(res.get("parts"), res.get("text"))
         results.append(imgs[0] if imgs else {"b64_json": "", "note": "картинка не получена",
                                             "debug": json.dumps(res.get("parts"))[:1500]})
-        asyncio.create_task(engine.cleanup(res.get("eval_id")))
+        asyncio.create_task(_close_and_sweep(res.get("eval_id")))
     fmt = body.get("response_format", "url")
     data = []
     for r in results:
@@ -340,7 +340,7 @@ async def _complete(request: Request, body, legacy=False):
                                "usage": _usage(prompt, "x" * text_len)}
                         yield "data: " + json.dumps(fin, ensure_ascii=False) + "\n\n"
                         yield "data: [DONE]\n\n"
-                        asyncio.create_task(engine.cleanup(payload.get("eval_id")))
+                        asyncio.create_task(_close_and_sweep(payload.get("eval_id")))
                         break
                     else:
                         e = payload
@@ -368,7 +368,7 @@ async def _complete(request: Request, body, legacy=False):
         log.exception("внутренняя ошибка")
         return _err(500, "internal", str(e)[:300])
     text = res.get("text") or ""
-    asyncio.create_task(engine.cleanup(res.get("eval_id")))
+    asyncio.create_task(_close_and_sweep(res.get("eval_id")))
     out = {
         "id": cid, "object": "chat.completion" if not legacy else "text_completion",
         "created": created, "model": display,
@@ -406,6 +406,17 @@ async def arena_pause(request: Request):
         engine.block_pause_until = 0.0
     return engine.pause(float(body.get("seconds") or 0),
                         reset_interval=bool(body.get("reset_interval")))
+
+
+async def _close_and_sweep(eval_id):
+    """Закрыть чат текущего запроса и по пути повторить невыполненные удаления."""
+    try:
+        await engine.cleanup(eval_id)
+    finally:
+        try:
+            await engine.retry_pending_cleanup(limit=2)
+        except Exception as e:
+            log.warning("sweep cleanup: %s", str(e)[:120])
 
 
 # ------------------------------------------------------------------ пробник
@@ -454,6 +465,24 @@ async def _run_probe(limit, per_provider, modality, ids):
                 cases.extend(lst[:per_provider])
             cases.sort(key=lambda x: x.best_rank)
             cases = cases[:limit]
+        # Бюджет дня принадлежит клиентам: пробник не тратит последние N обращений
+        # и не запускает больше моделей, чем осталось с учётом резерва.
+        reserve = int(getattr(C, "PROBE_BUDGET_RESERVE", 10))
+        left = int(C.DAILY_BUDGET) - int(engine.budget.get("used") or 0)
+        allowed = max(0, left - reserve)
+        if left <= 0:
+            PROBE_STATE["error"] = ("дневной бюджет исчерпан (%d/%d) — пробник не запускаю"
+                                    % (engine.budget.get("used"), C.DAILY_BUDGET))
+            return
+        if allowed <= 0:
+            PROBE_STATE["error"] = ("осталось %d обращений из %d, резерв для клиентов %d — "
+                                    "пробник пропущен" % (left, C.DAILY_BUDGET, reserve))
+            return
+        if len(cases) > allowed:
+            log.warning("пробник урезан бюджетом: %d → %d моделей (резерв %d)",
+                        len(cases), allowed, reserve)
+            cases = cases[:allowed]
+        PROBE_STATE["budget_left"] = left - len(cases)
         PROBE_STATE["total"] = len(cases)
         verified = {}
         if os.path.exists(C.VERIFIED):
@@ -468,11 +497,15 @@ async def _run_probe(limit, per_provider, modality, ids):
                     (cs.get("name") if isinstance(cs, dict) else None))
             prov = (getattr(cs, "provider", None) or
                     (cs.get("provider") if isinstance(cs, dict) else None)) or ""
+            deadline = float(getattr(
+                C, "PROBE_DEADLINE_AV" if modality in ("video", "audio", "image")
+                else "PROBE_DEADLINE", 90))
             try:
-                res = await engine.evaluate(model_id=mid_, prompt=prompt, modality=modality)
+                res = await engine.evaluate(model_id=mid_, prompt=prompt, modality=modality,
+                                            deadline_s=deadline)
                 rec = {"ok": True, "status": 200, "text": (res.get("text") or "")[:80],
                        "ms": res.get("ms"), "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-                await engine.cleanup(res.get("eval_id"))
+                await _close_and_sweep(res.get("eval_id"))
             except ArenaError as e:
                 rec = {"ok": False, "status": e.status, "code": e.code,
                        "error": e.message[:200], "at": time.strftime("%Y-%m-%d %H:%M:%S")}

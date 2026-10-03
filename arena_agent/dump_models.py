@@ -12,6 +12,23 @@ GET /api/chat/agent-models, который закрыт флагом agent-model
 
 Запуск:  .venv/bin/python arena_agent/dump_models.py
 Результат: data/arena/models_catalog.json (+ REST: GET /models/catalog)
+
+НЕ РАБОТАЕТ с 03.10.2026: страница /leaderboard/agent больше не отдаёт каталог
+инлайном — в RSC лежит `"initialModels":"$undefined"`, то есть список грузится
+клиентом отдельным запросом. Что известно на 03.10.2026:
+
+* на /leaderboard в пейлоаде есть публичный список моделей, но в новом виде:
+  `{"key":"claude-sonnet-5-5-max-agent","displayName":"Claude Sonnet 5.5",
+    "organization":"Anthropic","arenas":[{"slug":"code","rank":3,...}]}` —
+  ключи-слаги, без UUID, которые нужны `modelAId`;
+* `GET /api/chat/agent-models` существует, но закрыт флагом `agent-model-selector` (403);
+* `GET /api/chat/models` существует и требует валидный UUID в параметре `id`
+  (без него 400 ZodError), то есть это список моделей уровня чата, а не каталог.
+
+Следующий шаг: найти актуальный источник каталога (сканирование бандлов —
+`arena_agent/scan_api.py scan --download`, поиск вызова, отдающего `initialModels`)
+и обновить этот скрипт. Прогон при неработающем источнике безопасен: файл не
+перезаписывается, если моделей разобрано 0.
 """
 import asyncio
 import json

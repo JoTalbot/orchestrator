@@ -176,6 +176,7 @@ cd /opt/orchestrator
 
 # выгрузка архива
 .venv/bin/python arena_export/export_chats.py --skip-existing          # только новые/изменённые
+.venv/bin/python arena_export/export_chats.py --include-archived        # + архивные чаты
 .venv/bin/python arena_export/export_chats.py --only-meta              # лишь обновить index.json
 .venv/bin/python arena_export/export_chats.py --chat-id <id> --force   # перекачать один
 bash arena_export/run_export.sh                                        # в фоне, с логом
@@ -186,6 +187,36 @@ bash arena_export/run_export.sh                                        # в фо
 усиливает правило: сохранённое не трогается вообще. `--force` — наоборот, перекачать всё.
 Повторный запуск блокируется lock-файлом `data/arena/.export.lock` (снимается сам,
 если процесс мёртв).
+
+Состояние на **03.10.2026**: 251 чат в истории (224 `agentic` + 27 `evaluation`,
+из них 3 архивных), 4124 сообщения, ошибок 0. Плюс 250 чатов-сирот, которые
+раньше были в истории, а сейчас из аккаунта пропали — их файлы сохранены
+(`data/arena/chats/`, 4678 сообщений), потому что это единственная копия.
+
+Почему появлялись «пустые» файлы и как с ними поступать: до исправления парсера
+(`c2a2b80`) экспорт мог записать чат с 0 сообщений. Такие файлы убраны в
+`data/arena/_quarantine_empty_20261003/` (обратимо, манифест рядом). Проверить
+и повторить уборку можно так:
+
+```bash
+cd /opt/orchestrator
+python3 - <<'PY'
+import json, glob, os
+D = "data/arena"
+for p in glob.glob(f"{D}/chats/*.json"):
+    d = json.load(open(p))
+    if not (d.get("messages") or []):
+        print("пустой:", p)
+PY
+```
+
+Обновление индекса чатов после выгрузки (инкрементально, по mtime):
+
+```bash
+python3 ragindex_build.py build --root /opt/orchestrator   # добавит только новое/изменённое
+python3 ragindex_build.py stats --root /opt/orchestrator    # сводка
+python3 ragindex_build.py query "слово" --source arena -n 5 # поиск
+```
 
 ## 7. Карта API арены
 

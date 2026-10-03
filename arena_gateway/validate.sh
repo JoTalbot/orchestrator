@@ -118,6 +118,29 @@ if [ "$SKIP_IMAGES" -eq 0 ]; then
   try "картинки" /v1/images/generations \
       '{"model":"flux-2-pro","prompt":"A red apple on a wooden table","n":1}' 700
   rc=$?; [ $rc -eq 2 ] && { step "ИТОГ: прервано на картинках"; exit 1; }
+
+  # vision: сначала загрузка вложения (промпт не тратится), затем чат с картинкой.
+  step "5bis. vision: загрузка картинки + чат с ней"
+  IMG="$(python3 - <<'PYEOF'
+import base64, struct, zlib
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + \
+      chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00")) + chunk(b"IEND", b"")
+print(base64.b64encode(png).decode())
+PYEOF
+)"
+  UPL="$(curl -s -m 200 -X POST "$GW/v1/arena/upload" "${H[@]}" \
+        -d "{\"filename\":\"validate.png\",\"contentType\":\"image/png\",\"dataB64\":\"$IMG\"}")"
+  echo "  загрузка: $(printf '%s' "$UPL" | head -c 200)"
+  case "$UPL" in
+    *'"ok":true'*|*'"ok": true'*) ;;
+    *) echo "  !! вложение не загрузилось"; FAILS=$((FAILS + 1)) ;;
+  esac
+  pace
+  try "vision" /v1/chat/completions \
+      "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Какого цвета этот пиксель? Ответь одним словом.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,$IMG\"}}]}]}" 700
+  rc=$?; [ $rc -eq 2 ] && { step "ИТОГ: прервано на vision"; exit 1; }
 fi
 
 step "6. статус шлюза"

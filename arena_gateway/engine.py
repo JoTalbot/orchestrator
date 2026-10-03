@@ -352,7 +352,14 @@ class ArenaEngine:
             return json.loads(r.read().decode())
 
     def _close_tab(self, target_id):
+        """Закрыть вкладку. Последнюю не трогаем: snap-Chromium завершается,
+        когда закрывается единственная вкладка окна, и тогда CDP-сессии теряют
+        все потребители (экспорт, arena-api, шлюз)."""
         try:
+            pages = [t for t in self._cdp_targets() if t.get("type") == "page"]
+            if len(pages) <= 1 and any(t.get("id") == target_id for t in pages):
+                log.debug("не закрываю последнюю вкладку %s", target_id)
+                return False
             urllib.request.urlopen(self.cfg.CDP + "/json/close/" + target_id, timeout=10).read()
             return True
         except Exception:

@@ -62,9 +62,26 @@ def find_arena_tab():
     return None
 
 
+def page_targets():
+    """Список живых вкладок (type == page) — нужен, чтобы не закрыть последнюю."""
+    try:
+        with urllib.request.urlopen(CDP + "/json/list", timeout=10) as r:
+            return [t for t in json.loads(r.read().decode()) if t.get("type") == "page"]
+    except Exception:
+        return []
+
+
 def close_tab(target_id) -> bool:
-    """Закрыть вкладку в браузере (не только websocket). Возвращает успех."""
+    """Закрыть вкладку в браузере (не только websocket). Возвращает успех.
+
+    Последнюю вкладку не закрываем: snap-Chromium выходит, когда закрывается
+    единственная вкладка окна, — а вместе с ним теряют сессию все, кто ходит
+    через CDP :9222 (инцидент 03.10.2026: браузер падал циклом).
+    """
     if not target_id:
+        return False
+    pages = page_targets()
+    if len(pages) <= 1 and any(t.get("id") == target_id for t in pages):
         return False
     try:
         urllib.request.urlopen(CDP + "/json/close/" + target_id, timeout=10)
@@ -222,11 +239,7 @@ class ArenaAPI:
         except Exception:
             pass
         if self.own_tab and self.tab.target_id:
-            try:
-                urllib.request.urlopen(CDP + "/json/close/" + self.tab.target_id,
-                                       timeout=10)
-            except Exception:
-                pass
+            close_tab(self.tab.target_id)   # не тронет последнюю вкладку браузера
         self.tab = await connect(open_if_missing=True, own=self.own_tab,
                                  verbose=self.verbose)
 

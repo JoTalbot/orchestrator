@@ -67,6 +67,7 @@ async def main() -> int:
     a = ap.parse_args()
 
     eng = ArenaEngine(C)
+    await eng.ensure_tab()          # без этого JS-ядро __agwFetch/__agwAction не установлено
     mode = C.CLEANUP_MODE
     entries = await history(eng)
     targets = [e for e in entries if e.get("type") == "evaluation"]

@@ -41,6 +41,12 @@ async def history(eng, include_archived=True, limit=50, max_pages=40):
         if cursor:
             q.append("cursor=" + urllib.parse.quote(str(cursor)))
         d = await eng.fetch_json("GET", "/api/history/unified?" + "&".join(q))
+        # __agwFetch отдаёт {status, body}, где body — строка JSON: разбираем её
+        if isinstance(d, dict) and isinstance(d.get("body"), str):
+            try:
+                d = json.loads(d["body"])
+            except Exception:
+                break
         if not isinstance(d, dict):
             break
         out.extend(d.get("entries") or [])

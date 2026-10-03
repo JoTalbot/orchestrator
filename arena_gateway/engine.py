@@ -125,13 +125,15 @@ JS_INSTALL = r"""
 
   window.__agwFree = function (id) { delete window.__agw.jobs[id]; return Object.keys(window.__agw.jobs).length; };
 
-  window.__agwFetch = async function (method, path, body) {
+  window.__agwFetch = async function (method, path, body, maxBytes) {
     try {
       const r = await fetch(path, {method: method, credentials: 'include',
         headers: body ? {'content-type': 'application/json'} : {},
         body: body ? JSON.stringify(body) : undefined});
       const t = await r.text();
-      return JSON.stringify({status: r.status, body: t.slice(0, 4000)});
+      // Лимит нужен, чтобы не таскать гигабайты через CDP, но 4000 обрезало
+      // даже страницу истории — поэтому его можно поднять из вызова.
+      return JSON.stringify({status: r.status, body: t.slice(0, maxBytes || 4000)});
     } catch (e) { return JSON.stringify({status: 0, body: String(e)}); }
   };
 
@@ -897,9 +899,10 @@ class ArenaEngine:
         log.warning("ошибка: %s", self.last_error)
 
     # ------------------------------------------------------------ служебное
-    async def fetch_json(self, method, path, body=None):
-        raw = await self.js("window.__agwFetch(%s, %s, %s)" % (
-            json.dumps(method), json.dumps(path), json.dumps(body)), timeout=60)
+    async def fetch_json(self, method, path, body=None, max_bytes=None):
+        raw = await self.js("window.__agwFetch(%s, %s, %s, %s)" % (
+            json.dumps(method), json.dumps(path), json.dumps(body),
+            json.dumps(max_bytes)), timeout=60)
         try:
             return json.loads(raw)
         except Exception:

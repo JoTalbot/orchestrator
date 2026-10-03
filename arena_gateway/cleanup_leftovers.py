@@ -40,7 +40,8 @@ async def history(eng, include_archived=True, limit=50, max_pages=40):
              "includeArchived=%s" % ("true" if include_archived else "false")]
         if cursor:
             q.append("cursor=" + urllib.parse.quote(str(cursor)))
-        d = await eng.fetch_json("GET", "/api/history/unified?" + "&".join(q))
+        d = await eng.fetch_json("GET", "/api/history/unified?" + "&".join(q),
+                                 max_bytes=400_000)
         # __agwFetch отдаёт {status, body}, где body — строка JSON: разбираем её
         if isinstance(d, dict) and isinstance(d.get("body"), str):
             try:

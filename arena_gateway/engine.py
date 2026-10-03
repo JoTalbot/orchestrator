@@ -5,7 +5,7 @@ POST /nextjs-api/stream/create-evaluation → разбор SSE-потока ар
 Внутри: очередь с темпом (анти-кулдаун), вотчдоги (токен, первый байт, простой,
 общее время), эскалация до reCAPTCHA v2, ретраи, очистка чата после ответа.
 """
-import asyncio, collections, json, logging, os, re, secrets, time, urllib.request, uuid
+import asyncio, base64, collections, json, logging, os, re, secrets, time, urllib.request, uuid
 
 import websockets
 
@@ -137,7 +137,7 @@ JS_INSTALL = r"""
     } catch (e) { return JSON.stringify({status: 0, body: String(e)}); }
   };
 
-  window.__agwAction = async function (actionId, args, path) {
+  window.__agwAction = async function (actionId, args, path, maxBytes) {
     try {
       const r = await fetch(path || location.pathname, {
         method: 'POST',
@@ -146,7 +146,36 @@ JS_INSTALL = r"""
         credentials: 'include',
         body: JSON.stringify(args || [])});
       const t = await r.text();
-      return JSON.stringify({status: r.status, body: t.slice(0, 2000)});
+      // для generateUploadUrl усечения в 2 КБ не хватало: там длинный presigned URL
+      return JSON.stringify({status: r.status, body: t.slice(0, maxBytes || 2000)});
+    } catch (e) { return JSON.stringify({status: 0, body: String(e)}); }
+  };
+
+  // Бинарные ответы (картинки) через CDP не пройдут как текст — отдаём base64.
+  window.__agwFetchB64 = async function (url, maxBytes) {
+    try {
+      const r = await fetch(url, {credentials: 'omit'});
+      const buf = await r.arrayBuffer();
+      if (maxBytes && buf.byteLength > maxBytes)
+        return JSON.stringify({status: r.status, tooBig: buf.byteLength});
+      const bytes = new Uint8Array(buf);
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000)
+        s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return JSON.stringify({status: r.status, ctype: r.headers.get('content-type'),
+                             b64: btoa(s)});
+    } catch (e) { return JSON.stringify({status: 0, body: String(e)}); }
+  };
+
+  // Загрузка файла на арену (PUT в presigned URL, как это делает веб-клиент).
+  window.__agwPutB64 = async function (url, b64, ctype) {
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const r = await fetch(url, {method: 'PUT', body: bytes,
+                                  headers: {'Content-Type': ctype}});
+      return JSON.stringify({status: r.status});
     } catch (e) { return JSON.stringify({status: 0, body: String(e)}); }
   };
 
@@ -764,7 +793,7 @@ class ArenaEngine:
     async def evaluate(self, *, model_id, prompt, modality="chat",
                        mode="direct-battle", session_id=None, extra=None,
                        wait_budget=None, collect=True, deadline_s=None,
-                       no_data_s=None):
+                       no_data_s=None, attachments=None):
         """
         Один запрос к арене. Возвращает dict:
         {ok, text, reasoning, parts, finish_reason, eval_id, status, ms,
@@ -781,7 +810,10 @@ class ArenaEngine:
             "modelAId": model_id,
             "userMessageId": uuid7(),
             "modelAMessageId": uuid7(),
-            "userMessage": {"content": prompt, "experimental_attachments": [],
+            # experimental_attachments — так веб-клиент direct-режима передаёт
+            # картинки: [{key, url (подписанный), mimeType}, …] (см. upload_attachment)
+            "userMessage": {"content": prompt,
+                            "experimental_attachments": attachments or [],
                             "metadata": {}},
         }
         if not session_id:
@@ -936,16 +968,155 @@ class ArenaEngine:
         except Exception:
             return {"status": 0, "body": str(raw)}
 
-    async def server_action(self, name, args, path=None):
+    async def server_action(self, name, args, path=None, max_bytes=None):
         aid = self.actions.get(name)
         if not aid:
             return {"status": 0, "body": "неизвестное действие %s" % name}
-        raw = await self.js("window.__agwAction(%s, %s, %s)" % (
-            json.dumps(aid), json.dumps(args), json.dumps(path)), timeout=60)
+        raw = await self.js("window.__agwAction(%s, %s, %s, %s)" % (
+            json.dumps(aid), json.dumps(args), json.dumps(path),
+            json.dumps(max_bytes)), timeout=60)
         try:
             return json.loads(raw)
         except Exception:
             return {"status": 0, "body": str(raw)[:300]}
+
+    @staticmethod
+    def _json_from_rsc(text, want=None):
+        """Достать JSON-объект из тела ответа Next.js server action.
+
+        Ответ — RSC-поток вида `1:{"success":true,"data":{…}}`; при этом внутри
+        строки экранированы (`{\"uploadUrl\":…}`). Ищем объект, в котором есть
+        ключ `want` (или первый сбалансированный), и возвращаем его как dict.
+        """
+        if not text:
+            return None
+        cand = text
+        if '\\"' in cand:
+            try:
+                cand = json.loads('"%s"' % cand.replace("\n", "\\n"))
+            except Exception:
+                cand = cand.replace('\\"', '"')
+        def balanced(st):
+            """Объект от позиции st (сбалансированные скобки) или None."""
+            depth, instr, esc = 0, False, False
+            for j in range(st, min(len(cand), st + 1_000_000)):
+                c = cand[j]
+                if instr:
+                    if esc: esc = False
+                    elif c == "\\": esc = True
+                    elif c == '"': instr = False
+                    continue
+                if c == '"': instr = True
+                elif c == "{": depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(cand[st:j + 1])
+                        except Exception:
+                            return None
+            return None
+
+        starts = [i for i, ch in enumerate(cand) if ch == "{"]
+        if want:
+            idx = cand.find('"%s"' % want)
+            if idx > 0:
+                # Сначала внутренний объект вокруг ключа, потом «расширяемся»
+                # влево до внешнего ({"success":true,"data":{…}}): сам результат
+                # действия в RSC-потоке идёт строкой `1:{…}`.
+                inner = [i for i in starts if i < idx]
+                if inner:
+                    st = inner[-1]
+                    obj = balanced(st)
+                    if isinstance(obj, dict):
+                        for _ in range(4):
+                            outer = [i for i in starts if i < st]
+                            if not outer:
+                                break
+                            st2 = outer[-1]
+                            obj2 = balanced(st2)
+                            if isinstance(obj2, dict) and want in json.dumps(obj2):
+                                st, obj = st2, obj2
+                            else:
+                                break
+                        return obj
+        best = None
+        for st in starts[:60]:
+            obj = balanced(st)
+            if obj is None:
+                continue
+            if want is None or (isinstance(obj, dict) and want in json.dumps(obj)):
+                return obj
+            if best is None:
+                best = obj
+        return best
+
+    async def action_json(self, name, args, want=None, path=None):
+        """Server action, у которого результат нужен как данные (upload URL и пр.)."""
+        # 20 КБ не хватало: результат действия приходит в конце RSC-потока
+        # страницы (у generateUploadUrl — на ~52 КБ).
+        raw = await self.server_action(name, args, path=path, max_bytes=400_000)
+        r = raw if isinstance(raw, dict) else {}
+        obj = self._json_from_rsc(r.get("body") or "", want=want)
+        return r.get("status"), obj
+
+    # ------------------------------------------------------------- вложения
+    async def fetch_b64(self, url, max_bytes=8 * 1024 * 1024):
+        """Скачать файл (картинку) байтами: бинарь через CDP идёт как base64."""
+        raw = await self.js("window.__agwFetchB64(%s, %s)" % (
+            json.dumps(url), json.dumps(max_bytes)), timeout=120)
+        try:
+            d = json.loads(raw)
+        except Exception:
+            d = {"status": 0, "body": str(raw)[:200]}
+        if d.get("tooBig"):
+            raise ArenaError(413, "too_big", "файл больше %d байт" % max_bytes)
+        if not d.get("b64"):
+            raise ArenaError(502, "fetch_failed",
+                             "не скачал %s: %s" % (url[:80], str(d)[:150]))
+        return base64.b64decode(d["b64"]), (d.get("ctype") or "")
+
+    async def upload_attachment(self, data, filename, content_type):
+        """Картинка → арена.
+
+        Поток как у веб-клиента direct-режима (вытащен из чанка 0lb8t4fqo_ksk.js):
+          generateUploadUrl(name, type) → {success, data:{uploadUrl, key}};
+          PUT uploadUrl (тело — файл, Content-Type);
+          getSignedUrl(key) → {success, data:{url}}.
+        В сообщение попадает {key, url, mimeType}.
+        """
+        if isinstance(data, str):
+            data = data.encode()
+        st, obj = await self.action_json("generateUploadUrl",
+                                         [filename, content_type],
+                                         want="uploadUrl")
+        d = (obj or {}).get("data") if isinstance(obj, dict) else None
+        if not (isinstance(d, dict) and d.get("uploadUrl")):
+            raise ArenaError(502, "upload_url_failed",
+                             "generateUploadUrl → %s %s" % (st, str(obj)[:200]))
+        upload_url, key = d["uploadUrl"], d.get("key") or ""
+        b64 = base64.b64encode(data).decode()
+        raw = await self.js("window.__agwPutB64(%s, %s, %s)" % (
+            json.dumps(upload_url), json.dumps(b64),
+            json.dumps(content_type)), timeout=180)
+        try:
+            put = json.loads(raw)
+        except Exception:
+            put = {"status": 0, "body": str(raw)[:200]}
+        if int(put.get("status") or 0) >= 400 or not put.get("status"):
+            raise ArenaError(502, "upload_put_failed",
+                             "PUT в хранилище → %s %s" % (put.get("status"),
+                                                          str(put.get("body"))[:150]))
+        st2, obj2 = await self.action_json("getSignedUrl",
+                                           [key.lstrip("/")], want="url")
+        d2 = (obj2 or {}).get("data") if isinstance(obj2, dict) else None
+        url = (d2 or {}).get("url") if isinstance(d2, dict) else None
+        if not url:
+            raise ArenaError(502, "signed_url_failed",
+                             "getSignedUrl → %s %s" % (st2, str(obj2)[:200]))
+        log.info("вложение загружено: %s (%d байт, %s)", filename, len(data),
+                 content_type)
+        return {"key": key, "url": url, "mimeType": content_type}
 
     async def cleanup(self, eval_id, kind="evaluation", record=True):
         """Закрыть чат арены после ответа: удалить или архивировать.

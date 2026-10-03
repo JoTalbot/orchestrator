@@ -219,6 +219,43 @@ def case_supports():
     print("11. модальности: видео-модель не идёт в chat, search — только в search")
 
 
+def case_rsc_json():
+    """Ответ server action разбирается в объект (нужно для generateUploadUrl)."""
+    from engine import ArenaEngine
+    raw = '1:{"success":true,"data":{"uploadUrl":"https://s3/x?a=1&b=2","key":"up/1.png"}}'
+    obj = ArenaEngine._json_from_rsc(raw, want="uploadUrl")
+    assert obj and obj["success"] and obj["data"]["key"] == "up/1.png", obj
+    # тот же ответ, но завёрнутый в RSC-строку с экранированием
+    esc = json.dumps(raw)
+    obj2 = ArenaEngine._json_from_rsc(esc, want="uploadUrl")
+    assert obj2 and obj2["data"]["uploadUrl"].startswith("https://"), obj2
+    print("12. server action: JSON вынимается из RSC-тела (в т.ч. экранированного)")
+
+
+def case_images():
+    """Картинки: сбор из сообщений, data:-URL, текст-заглушка, картинка без подписи."""
+    import app as A
+    msgs = [{"role": "user", "content": [
+        {"type": "text", "text": "что на фото?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]}]
+    imgs = A.collect_images(msgs)
+    assert len(imgs) == 1 and imgs[0]["url"].startswith("data:image/png"), imgs
+    data, mime = A._decode_data_url("data:image/jpeg;base64,QUJD")
+    assert data == b"ABC" and mime == "image/jpeg", (data, mime)
+    prompt = A.build_prompt(msgs)
+    assert "[изображение]" in prompt and "не поддерживается" not in prompt, prompt
+    only_img = [{"role": "user", "content": [
+        {"type": "image_url", "image_url": "https://x/y.png"}]}]
+    p2 = A.build_prompt(only_img)
+    assert "[изображение]" in p2 and "не поддерживается" not in p2, p2
+    assert A.collect_images(only_img)[0]["url"] == "https://x/y.png"
+    # ссылка на картинку прямо в тексте тоже становится вложением
+    link = [{"role": "user", "content": "что тут? https://ex.com/a/photo.png спасибо"}]
+    assert A.collect_images(link)[0]["url"].endswith("photo.png")
+    print("13. vision: картинки собираются из messages, data:-URL декодируется, "
+          "картинка без подписи не роняет запрос")
+
+
 def main():
     import time as _t
     globals()["time"] = _t
@@ -229,6 +266,8 @@ def main():
     asyncio.run(case_state_sync())
     asyncio.run(case_prompt_block_streak())
     case_supports()
+    case_rsc_json()
+    case_images()
     print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
     return 0
 

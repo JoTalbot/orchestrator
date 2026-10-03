@@ -36,6 +36,9 @@ async def main():
     p.add_argument("--filter", dest="flt"); p.add_argument("--limit", type=int, default=40)
     p = sub.add_parser("resolve"); p.add_argument("name")
     p = sub.add_parser("ask"); p.add_argument("text"); p.add_argument("--model")
+    p.add_argument("--image", action="append", default=[],
+                   help="файл-картинка (можно несколько): загрузится на арену "
+                        "и уйдёт в experimental_attachments")
     p.add_argument("--modality"); p.add_argument("--stream", action="store_true")
     p.add_argument("--keep", action="store_true"); p.add_argument("--session")
     p = sub.add_parser("raw"); p.add_argument("text"); p.add_argument("--model")
@@ -45,6 +48,10 @@ async def main():
     p = sub.add_parser("v2")
     p = sub.add_parser("cleanup"); p.add_argument("eval_id")
     sub.add_parser("prune-verified")
+    p = sub.add_parser("action")
+    p.add_argument("name", help="имя server action (см. engine.SERVER_ACTIONS)")
+    p.add_argument("args", nargs="*", help="аргументы как JSON-строки")
+    p.add_argument("--raw", action="store_true", help="печатать тело целиком")
     a = ap.parse_args()
 
     reg = Registry(C.CATALOG, C.VERIFIED, os.path.join(C.DATA_DIR, "model_aliases.json"))
@@ -93,6 +100,22 @@ async def main():
             return
         print("модель: %s (%s) | модальность: %s" % (m.public_name, m.id, mod))
         await eng.start()
+        attachments = None
+        paths = list(getattr(a, "image", None) or [])
+        if paths:
+            if not m.caps_in.get("image"):
+                print("модель не принимает изображения (каталог) — картинки не шлю")
+            else:
+                attachments = []
+                import mimetypes
+                for pth in paths:
+                    with open(pth, "rb") as f:
+                        data = f.read()
+                    ctype = mimetypes.guess_type(pth)[0] or "image/png"
+                    up = await eng.upload_attachment(data, os.path.basename(pth), ctype)
+                    attachments.append(up)
+                    print("  вложение: %s (%d КБ) → %s" % (os.path.basename(pth),
+                                                          len(data) // 1024, up["key"]))
         t0 = time.time()
         if a.cmd == "ask" and a.stream:
             buf = []
@@ -102,7 +125,8 @@ async def main():
             try:
                 res = await eng.evaluate(model_id=m.id, prompt=a.text, modality=mod,
                                          session_id=getattr(a, "session", None),
-                                         extra={"on_delta": on_delta})
+                                         extra={"on_delta": on_delta},
+                                         attachments=attachments)
                 print("\n---\n%.1f с | символов: %d | eval: %s"
                       % (time.time() - t0, len("".join(buf)), res.get("eval_id")))
                 if not getattr(a, "keep", False):
@@ -112,7 +136,8 @@ async def main():
                       % (e.status, e.code, e.message, e.retry_after))
         else:
             try:
-                res = await eng.evaluate(model_id=m.id, prompt=a.text, modality=mod)
+                res = await eng.evaluate(model_id=m.id, prompt=a.text, modality=mod,
+                                         attachments=attachments)
                 print("\n=== ответ (%.1f с, %s байт потока) ===" % (time.time() - t0, res.get("bytes")))
                 print(res.get("text") or "<пусто>")
                 if res.get("parts"):
@@ -181,6 +206,30 @@ async def main():
                        "modality": a.modality, "models": verified},
                       open(C.VERIFIED, "w"), ensure_ascii=False, indent=1)
         print("\nработают %d из %d → %s" % (ok, len(cases), C.VERIFIED))
+        await eng.stop()
+        return
+
+    if a.cmd == "action":
+        # Диагностика React Server Actions: арену не нагружает (это не промпт),
+        # печатает сырое тело, чтобы видеть формат ответа.
+        await eng.start()
+        args = []
+        for x in a.args:
+            try:
+                args.append(json.loads(x))
+            except Exception:
+                args.append(x)
+        raw = await eng.server_action(a.name, args, max_bytes=400000)
+        print("status:", raw.get("status"))
+        body = raw.get("body") or ""
+        print("тело (%d символов):" % len(body))
+        print(body if a.raw else body[:1500])
+        for needle in ("uploadUrl", "success", "signed", '"data"'):
+            i = body.find(needle)
+            print("  поиск %-10s → %s" % (needle, ("позиция %d: …%s…" % (i, body[max(0, i-120):i+220].replace(chr(10), " ")))
+                                          if i >= 0 else "не найдено"))
+        obj = eng._json_from_rsc(body, want=None)
+        print("\nразобрано:", json.dumps(obj, ensure_ascii=False)[:800] if obj else None)
         await eng.stop()
         return
 

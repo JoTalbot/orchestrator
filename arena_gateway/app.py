@@ -85,6 +85,100 @@ def _err(status, code, message, retry_after=None):
     return JSONResponse(status_code=status, content=body, headers=headers)
 
 
+MAX_IMAGES = 10          # лимит арены на вложения в одном сообщении
+
+
+def _image_url(p):
+    """URL картинки из части сообщения (OpenAI и Responses-форматы)."""
+    if p.get("type") == "input_image" and isinstance(p.get("image_url"), str):
+        return p["image_url"]
+    iu = p.get("image_url")
+    if isinstance(iu, dict):
+        return iu.get("url")
+    if isinstance(iu, str):
+        return iu
+    return None
+
+
+def collect_images(messages):
+    """Картинки последнего пользовательского сообщения → [{url, filename}].
+
+    Поддерживаем data:-URL (base64) и обычные http(s)-ссылки: и то и другое
+    скачивается в браузерной вкладке, затем загружается на арену
+    (`engine.upload_attachment`) и уходит в message.experimental_attachments.
+    """
+    last = None
+    for m in messages or []:
+        if (m.get("role") or "user").lower() == "user":
+            last = m
+    if not last:
+        return []
+    raw = last.get("content")
+    out = []
+    if isinstance(raw, list):
+        for p in raw:
+            if not isinstance(p, dict):
+                continue
+            url = _image_url(p)
+            if not url:
+                continue
+            out.append({"url": url,
+                        "filename": p.get("filename") or "image",
+                        "mediaType": p.get("media_type") or p.get("mediaType")})
+    elif isinstance(raw, str):
+        if raw.startswith("data:image/"):
+            out.append({"url": raw, "filename": "image", "mediaType": None})
+        else:
+            # «вот ссылка https://…/photo.png» — тоже вложение
+            for m in IMG_URL_RE.finditer(raw):
+                out.append({"url": m.group(0), "filename": "image", "mediaType": None})
+    elif isinstance(raw, list) and not out:
+        for p in raw:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                for m in IMG_URL_RE.finditer(p["text"]):
+                    out.append({"url": m.group(0), "filename": "image",
+                                "mediaType": None})
+    return out[:MAX_IMAGES]
+
+
+def _decode_data_url(url):
+    """data:image/png;base64,.... → (bytes, mime)."""
+    head, _, payload = url.partition(",")
+    mime = head[5:].split(";")[0] or "image/png"
+    try:
+        return base64.b64decode(payload), mime
+    except Exception:
+        raise ArenaError(400, "bad_image", "не разобрал data:-URL картинки")
+
+
+GUESS_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp"}
+
+
+async def prepare_attachments(engine, images):
+    """Скачать/декодировать картинки и загрузить их на арену."""
+    out = []
+    for i, im in enumerate(images, 1):
+        url = im["url"]
+        if url.startswith("data:"):
+            data, mime = _decode_data_url(url)
+        else:
+            data, ctype = await engine.fetch_b64(url)
+            mime = im.get("mediaType") or ctype or ""
+            if not mime.startswith("image/"):
+                import os as _os
+                mime = GUESS_MIME.get(_os.path.splitext(url.split("?")[0])[1].lower(),
+                                      "image/png")
+        name = im.get("filename") or ("image%d%s" % (i, {
+            "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif",
+        }.get(mime, ".png")))
+        if not any(name.lower().endswith(e) for e in GUESS_MIME):
+            name += {"image/jpeg": ".jpg", "image/webp": ".webp",
+                     "image/gif": ".gif"}.get(mime, ".png")
+        out.append(await engine.upload_attachment(data, name, mime))
+    return out
+
+
 def _text_of(content):
     if isinstance(content, str):
         return content
@@ -95,7 +189,7 @@ def _text_of(content):
                 if p.get("type") == "text" or "text" in p:
                     out.append(str(p.get("text", "")))
                 elif p.get("type") in ("image_url", "input_image"):
-                    out.append("[изображение во входе не поддерживается шлюзом]")
+                    out.append("[изображение]")
             elif isinstance(p, str):
                 out.append(p)
         return "\n".join(x for x in out if x)
@@ -122,6 +216,8 @@ def build_prompt(messages):
             label = {"user": "пользователь", "assistant": "ассистент"}.get(role, role)
             convo.append((label, txt))
     if not convo:
+        if has_images:
+            return "[изображение]"      # картинка без подписи — валидный запрос
         raise ArenaError(400, "bad_request", "в messages нет текстовых сообщений")
     if not sys_parts and len(convo) == 1 and convo[0][0] == "user" and not has_images:
         return convo[0][1]
@@ -294,6 +390,21 @@ async def _complete(request: Request, body, legacy=False):
     created = int(time.time())
     display = m.public_name or m.id
 
+    # Вложения (vision): картинки из последнего пользовательского сообщения
+    # загружаются на арену и уходят в message.experimental_attachments.
+    images = collect_images(body.get("messages"))
+    if images and not (m.caps_in.get("image")):
+        return _err(400, "no_vision",
+                    "модель '%s' не принимает изображения на вход (по каталогу); "
+                    "выберите модель с возможностью image (например, gemini/claude)"
+                    % display)
+    try:
+        attachments = await prepare_attachments(engine, images) if images else None
+    except ArenaError as e:
+        return _err(e.status, e.code, e.message, e.retry_after)
+    except Exception as e:
+        return _err(502, "upload_failed", "не загрузил вложение: %s" % str(e)[:200])
+
     if stream:
         async def gen():
             queue = asyncio.Queue(maxsize=500)
@@ -308,7 +419,8 @@ async def _complete(request: Request, body, legacy=False):
                                                 modality=modality, mode=mode,
                                                 session_id=session_id,
                                                 extra={"on_delta": on_delta},
-                                                wait_budget=wait_budget)
+                                                wait_budget=wait_budget,
+                                                attachments=attachments)
                     queue.put_nowait(("done", res))
                 except ArenaError as e:
                     queue.put_nowait(("error", e))
@@ -361,7 +473,8 @@ async def _complete(request: Request, body, legacy=False):
     try:
         res = await engine.evaluate(model_id=m.id, prompt=prompt, modality=modality,
                                     mode=mode, session_id=session_id,
-                                    wait_budget=wait_budget)
+                                    wait_budget=wait_budget,
+                                    attachments=attachments)
     except ArenaError as e:
         return _err(e.status, e.code, e.message, e.retry_after)
     except Exception as e:
@@ -388,6 +501,43 @@ async def _complete(request: Request, body, legacy=False):
 
 
 # ------------------------------------------------------------------ пауза
+@app.post("/v1/arena/upload")
+async def upload(request: Request):
+    """Загрузить вложение на арену без отправки сообщения.
+
+    Тело: {"filename": "a.png", "contentType": "image/png", "dataB64": "..."}
+    (или {"url": "https://…/a.png"} — скачаем во вкладке).
+    Ответ: {"key", "url", "mimeType"} — готово для messages с image_url.
+    Удобно проверять vision, не тратя дневной бюджет на промпт.
+    """
+    _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("filename") or "image.png"
+    ctype = body.get("contentType") or ""
+    try:
+        if body.get("dataB64"):
+            data = base64.b64decode(body["dataB64"])
+        elif body.get("url"):
+            data, ctype = await engine.fetch_b64(body["url"])
+        else:
+            return _err(400, "bad_request", "нужен dataB64 или url")
+    except ArenaError as e:
+        return _err(e.status, e.code, e.message)
+    except Exception as e:
+        return _err(400, "bad_request", "не разобрал тело: %s" % str(e)[:150])
+    if not ctype:
+        import os as _os
+        ctype = GUESS_MIME.get(_os.path.splitext(name)[1].lower(), "image/png")
+    try:
+        att = await engine.upload_attachment(data, name, ctype)
+    except ArenaError as e:
+        return _err(e.status, e.code, e.message)
+    return {"ok": True, "bytes": len(data), "attachment": att}
+
+
 @app.post("/v1/arena/pause")
 async def arena_pause(request: Request):
     """Ручной «тихий режим»: {"seconds": 3600} — не ходить в арену час.

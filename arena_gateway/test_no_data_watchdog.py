@@ -172,6 +172,28 @@ async def case_state_sync():
           % (eng.budget["used"], eng.cooldown_until - _t.time()))
 
 
+async def case_prompt_block_streak():
+    """Серия отказов «prompt failed» — это флаг аккаунта: после N подряд шлюз
+    обязан уйти в длинную паузу, а не «тыкать» арену дальше (каждая попытка
+    продлевает флаг)."""
+    import time as _t
+    eng = ArenaEngine(C)
+    eng.cooldown_until = 0.0
+    eng.prompt_failed_streak = 0
+    lim = int(getattr(C, "PROMPT_BLOCK_STREAK", 3))
+    for i in range(lim):
+        eng.prompt_failed_streak += 1
+    assert eng.prompt_failed_streak >= lim, eng.prompt_failed_streak
+    eng.pause(int(getattr(C, "BLOCK_PAUSE", 7200)))
+    left = eng.cooldown_until - _t.time()
+    assert left > 7000, left
+    print("9. серия %d отказов промпта → пауза %.0f с (больше не тратим попытки)"
+          % (lim, left))
+    eng.pause(0)
+    assert eng.cooldown_until == 0 and eng.recaptcha_streak == 0
+    print("10. пауза снята вручную: кулдаун 0, серия обнулена")
+
+
 def main():
     import time as _t
     globals()["time"] = _t
@@ -180,6 +202,7 @@ def main():
     asyncio.run(case_cleanup_queue())
     asyncio.run(case_budget_rollover())
     asyncio.run(case_state_sync())
+    asyncio.run(case_prompt_block_streak())
     print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
     return 0
 

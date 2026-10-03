@@ -238,6 +238,7 @@ class ArenaEngine:
         self._hits = collections.deque()
         self.cooldown_until = 0.0
         self.recaptcha_streak = 0   # подряд идущие отказы reCAPTCHA
+        self.prompt_failed_streak = 0   # подряд идущие 429 «prompt failed»
         self.security_blocked = False   # арена показывает модалку ручной проверки
         self.block_pause_until = 0.0    # до когда длится автопауза из-за модалки
         self.budget = {"day": "", "used": 0}   # дневной бюджет обращений к арене
@@ -266,6 +267,7 @@ class ArenaEngine:
         except Exception:
             return
         self.recaptcha_streak = int(d.get("recaptcha_streak") or 0)
+        self.prompt_failed_streak = int(d.get("prompt_failed_streak") or 0)
         self.security_blocked = bool(d.get("security_blocked"))
         self.block_pause_until = float(d.get("block_pause_until") or 0)
         b = d.get("budget")
@@ -330,6 +332,7 @@ class ArenaEngine:
             tmp = self.cfg.STATE + ".tmp"
             json.dump({"cooldown_until": self.cooldown_until, "interval": self.interval,
                        "recaptcha_streak": self.recaptcha_streak,
+                       "prompt_failed_streak": self.prompt_failed_streak,
                        "security_blocked": self.security_blocked,
                        "block_pause_until": self.block_pause_until,
                        "budget": self.budget,
@@ -840,6 +843,7 @@ class ArenaEngine:
             if http_status == 200 and (text or other):
                 self.counters["ok"] += 1
                 self.last_success = time.time()
+                self.prompt_failed_streak = 0
                 self._speed_up()
                 return {"ok": True, "text": text, "reasoning": "".join(reason_parts),
                         "parts": other, "finish": finish, "eval_id": eval_id,
@@ -878,6 +882,21 @@ class ArenaEngine:
             if http_status == 429 and "prompt failed" in str(raw_body).lower():
                 self.counters["prompt_failed"] += 1
                 self._slow_down("429 prompt failed")
+                self.prompt_failed_streak += 1
+                self._save_state()
+                streak_lim = int(getattr(self.cfg, "PROMPT_BLOCK_STREAK", 3))
+                if streak_lim > 0 and self.prompt_failed_streak >= streak_lim:
+                    pen = int(getattr(self.cfg, "BLOCK_PAUSE", 7200))
+                    self.pause(pen)
+                    log.warning("серия %d отказов «prompt failed» — пауза %d с "
+                                "(каждая попытка продлевает флаг аккаунта; "
+                                "снять: POST /v1/arena/pause с seconds=0)",
+                                self.prompt_failed_streak, pen)
+                    raise ArenaError(429, "prompt_failed_blocked",
+                                     "арена держит флаг аккаунта (серия %d отказов "
+                                     "«prompt failed»): автопауза %d с"
+                                     % (self.prompt_failed_streak, pen),
+                                     retry_after=pen)
                 if self.cfg.V2_ENABLED and not attempt_v2:
                     log.warning("429 prompt failed → эскалация к v2")
                     attempt_v2 = True
@@ -967,6 +986,7 @@ class ArenaEngine:
              "cooldown_remaining_s": max(0, int(self.cooldown_until - time.time())),
              "adaptive_interval_s": int(self.interval),
              "recaptcha_streak": self.recaptcha_streak,
+             "prompt_failed_streak": self.prompt_failed_streak,
              "security_check_required": self.security_blocked,
              "budget": dict(self.budget, limit=self.cfg.DAILY_BUDGET),
              "paused": self.cooldown_until > time.time(),
@@ -1036,6 +1056,9 @@ class ArenaEngine:
         sr = int(d.get("recaptcha_streak") or 0)
         if sr > self.recaptcha_streak:
             self.recaptcha_streak = sr
+        pf = int(d.get("prompt_failed_streak") or 0)
+        if pf > self.prompt_failed_streak:
+            self.prompt_failed_streak = pf
         if d.get("security_blocked") and not self.security_blocked:
             self.security_blocked = True
             self.block_pause_until = max(self.block_pause_until,

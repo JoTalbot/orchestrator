@@ -68,6 +68,10 @@ PENALTY_ESCALATE = _b("ARENA_GW_PENALTY_ESCALATE", True)
 PENALTY_MAX = _f("ARENA_GW_PENALTY_MAX", 7200)
 # модалка «Security Verification» (флаг аккаунта, нужен человек) — автопауза
 BLOCK_PAUSE = _f("ARENA_GW_BLOCK_PAUSE", 7200)
+# Серия отказов «prompt failed» (429) — тоже признак флага аккаунта: одиночный отказ
+# лечится замедлением, а серия НЕ лечится — каждая следующая попытка продлевает флаг.
+# Поэтому после N подряд уходим в длинную паузу (BLOCK_PAUSE) и не тратим попытки.
+PROMPT_BLOCK_STREAK = _i("ARENA_GW_PROMPT_STREAK", 3)
 # сколько отказов reCAPTCHA подряд считать флагом аккаунта (а не сбоем темпа)
 BLOCK_STREAK = int(_f("ARENA_GW_BLOCK_STREAK", 2))
 # дневной бюджет РЕАЛЬНЫХ обращений к арене (UTC-сутки); 0 = выключен.

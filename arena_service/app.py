@@ -271,7 +271,7 @@ async def models_catalog(only: Optional[str] = Query(None,
         selectable: Optional[bool] = Query(None),
         limit: int = Query(100, le=2000),
         x_api_key: Optional[str] = Header(None)):
-    """Каталог моделей arena.ai (1074 записи) — выгружен из `initialModels`
+    """Каталог моделей arena.ai (292 записи на 03.10.2026) — выгружен из `initialModels`
     в RSC страницы /leaderboard/agent, где модели лежат вместе с внутренними UUID.
 
     Важно: эти id — из каталога батл-режимов (модальности chat/webdev/image/

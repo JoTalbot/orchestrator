@@ -115,7 +115,7 @@ curl -s -H "$H" localhost:8790/health
 | `GET /health` | состояние моста: жива ли вкладка, аккаунт, сколько чатов в индексе/скачано, идёт ли экспорт |
 | `GET /me` `/pulse` `/balance` | профиль, квота, кредиты (`creditsRemaining`) |
 | `GET /models` | список моделей Agent Mode: `{available, status, models, error}` (пока `available:false`, см. раздел 11) |
-| `GET /models/catalog?only&selectable&limit` | каталог всех моделей площадки (1074 записи с UUID) из `initialModels` лидерборда |
+| `GET /models/catalog?only&selectable&limit` | каталог всех моделей площадки (292 записи с UUID на 03.10.2026) из RSC-потока `/text/direct` |
 | `GET /flags?only=agent` | feature-флаги аккаунта из `posthogFlags` страницы `/agent` |
 | `GET /api-map` | карта всех 116 эндпоинтов арены |
 | `GET /chats?limit&cursor&include_archived&type&source=live\|cache` | список чатов |
@@ -340,7 +340,7 @@ POST /nextjs-api/stream/create-chat
  "userSelectable":true,"rank":2,"rankByModality":{"chat":3,"webdev":31}}
 ```
 
-**1074 записи**, `userSelectable: true` у 948; организации: openai (82),
+**292 записи** (на 03.10.2026, после переезда источника), все `userSelectable`; организации: alibaba (47), openai (38),
 google (72), alibaba (61), anthropic (39), xai (24), minimax (19), wan (16),
 bytedance (13), meta (12), moonshot (11), mistral (9) и ещё ~616 без указания.
 Модальности в `rankByModality`: `chat`, `webdev`, `image`, `search`, `video`
@@ -462,7 +462,8 @@ ad:{"finishReason":"stop"}    ← finish
 
 ### Выбор модели
 
-`modelAId` — UUID из каталога (`data/arena/models_catalog.json`, 1074 записи).
+`modelAId` — UUID из каталога (`data/arena/models_catalog.json`, 292 записи на 03.10.2026;
+источник — RSC-поток `/text/direct` с заголовком `RSC: 1`).
 В UI страницы тот же выбор задаётся query-параметром `?model_a=<publicName>`
 (неизвестное значение откатывается к дефолту `max`). Шлюз разрешает имя модели так:
 UUID → точное `publicName` → псевдоним (`sonnet`, `haiku`, `flux`, `max`, …) →

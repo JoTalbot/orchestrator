@@ -32,7 +32,7 @@ MCP-сервер для агентов с поддержкой MCP: `/opt/orches
 не выдан A/B-флаг `agent-model-selector` (проверить флаг: `GET /flags?only=agent`).
 Проверено записью: `create-chat` с валидным `modelId` из каталога отвечает
 403 «Not allowed» (чат не создаётся), без `modelId` — 200; то есть выбрать
-модель нельзя даже зная UUID. Каталог всех моделей площадки (1074 записи:
+модель нельзя даже зная UUID. Каталог всех моделей площадки (292 записи на 03.10.2026; источник — RSC-поток `/text/direct`):
 UUID, организация, провайдер, возможности, userSelectable, ранги) —
 `data/arena/models_catalog.json`, REST `GET /models/catalog?only=…&selectable=true`,
 пересборка `python arena_agent/dump_models.py`. Доступ мониторит `arena-model-watch.timer` (каждые 15 минут, лог

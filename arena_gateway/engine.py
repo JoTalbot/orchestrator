@@ -327,6 +327,7 @@ class ArenaEngine:
         self._state_saved = now
         try:
             os.makedirs(os.path.dirname(self.cfg.STATE), exist_ok=True)
+            tmp = self.cfg.STATE + ".tmp"
             json.dump({"cooldown_until": self.cooldown_until, "interval": self.interval,
                        "recaptcha_streak": self.recaptcha_streak,
                        "security_blocked": self.security_blocked,
@@ -334,7 +335,8 @@ class ArenaEngine:
                        "budget": self.budget,
                        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                        "counters": dict(self.counters)},
-                      open(self.cfg.STATE, "w"), ensure_ascii=False, indent=1)
+                      open(tmp, "w"), ensure_ascii=False, indent=1)
+            os.replace(tmp, self.cfg.STATE)   # атомарно: файл читают другие процессы
         except Exception as e:
             log.warning("не сохранил состояние: %s", e)
 
@@ -1004,6 +1006,41 @@ class ArenaEngine:
             h["error"] = str(e)[:300]
         return h
 
+    def _sync_state(self):
+        """Подтянуть состояние, записанное ДРУГИМ процессом (ctl.py, validate.sh…).
+
+        Файл состояния один, а движков бывает несколько: сервис, CLI, скрипты.
+        Раньше каждый жил своим счётчиком и перезаписывал файл целиком — из-за
+        этого бюджет и кулдаун расходились (03.10.2026: в файле 5 обращений,
+        у сервиса 3). Берём максимум по бюджету за те же сутки и по кулдауну:
+        занижать защиту нельзя.
+        """
+        try:
+            d = json.load(open(self.cfg.STATE))
+        except Exception:
+            return
+        disk = d.get("budget") or {}
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if str(disk.get("day") or "") == today:
+            used = int(disk.get("used") or 0)
+            if used > int(self.budget.get("used") or 0):
+                log.info("бюджет подтянут из состояния файла: %s → %s",
+                         self.budget.get("used"), used)
+                self.budget = {"day": today, "used": used}
+        cu = float(d.get("cooldown_until") or 0)
+        if cu > self.cooldown_until:
+            self.cooldown_until = cu
+        iv = float(d.get("interval") or 0)
+        if iv > self.interval:
+            self.interval = min(iv, self.cfg.MAX_INTERVAL)
+        sr = int(d.get("recaptcha_streak") or 0)
+        if sr > self.recaptcha_streak:
+            self.recaptcha_streak = sr
+        if d.get("security_blocked") and not self.security_blocked:
+            self.security_blocked = True
+            self.block_pause_until = max(self.block_pause_until,
+                                         float(d.get("block_pause_until") or 0))
+
     def budget_rollover(self) -> bool:
         """Сменить сутки бюджета по UTC (04:00 → новые сутки = новые 40 обращений).
 
@@ -1023,6 +1060,7 @@ class ArenaEngine:
 
     def budget_left(self) -> int:
         """Сколько обращений к арене осталось сегодня."""
+        self._sync_state()
         self.budget_rollover()
         if not self.cfg.DAILY_BUDGET:
             return 10 ** 9
@@ -1031,6 +1069,7 @@ class ArenaEngine:
     def _budget_hit(self):
         """Учесть реальное обращение к арене; при исчерпании бюджета — пауза до 04:00 UTC."""
         import calendar
+        self._sync_state()
         self.budget_rollover()
         today = self.budget["day"]
         self.budget["used"] += 1

@@ -152,6 +152,26 @@ async def case_budget_rollover():
     C.DAILY_BUDGET = lim
 
 
+async def case_state_sync():
+    """Состояние, записанное другим процессом (ctl.py/validate.sh), не теряется:
+    бюджет берём по максимуму, кулдаун — по самой поздней границе."""
+    import time as _t
+    today = _t.strftime("%Y-%m-%d", _t.gmtime())
+    eng = ArenaEngine(C)
+    eng.budget = {"day": today, "used": 2}
+    eng.cooldown_until = 0.0
+    # «другой процесс» записал 30 обращений и кулдаун на 600 с вперёд
+    json.dump({"budget": {"day": today, "used": 30},
+               "cooldown_until": _t.time() + 600, "interval": 300,
+               "counters": {}}, open(C.STATE, "w"))
+    eng._sync_state()
+    assert eng.budget["used"] == 30, eng.budget
+    assert eng.cooldown_until > _t.time() + 500, eng.cooldown_until
+    assert eng.budget_left() == int(C.DAILY_BUDGET) - 30, eng.budget_left()
+    print("8. состояние из файла подхвачено: бюджет %s/40, кулдаун %.0f с"
+          % (eng.budget["used"], eng.cooldown_until - _t.time()))
+
+
 def main():
     import time as _t
     globals()["time"] = _t
@@ -159,6 +179,7 @@ def main():
     asyncio.run(case_stream_ok())
     asyncio.run(case_cleanup_queue())
     asyncio.run(case_budget_rollover())
+    asyncio.run(case_state_sync())
     print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
     return 0
 

@@ -468,7 +468,7 @@ async def _run_probe(limit, per_provider, modality, ids):
         # Бюджет дня принадлежит клиентам: пробник не тратит последние N обращений
         # и не запускает больше моделей, чем осталось с учётом резерва.
         reserve = int(getattr(C, "PROBE_BUDGET_RESERVE", 10))
-        left = int(C.DAILY_BUDGET) - int(engine.budget.get("used") or 0)
+        left = engine.budget_left()          # сам сменит сутки по UTC, если они кончились
         allowed = max(0, left - reserve)
         if left <= 0:
             PROBE_STATE["error"] = ("дневной бюджет исчерпан (%d/%d) — пробник не запускаю"

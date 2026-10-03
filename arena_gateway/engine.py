@@ -958,6 +958,7 @@ class ArenaEngine:
         return r
 
     async def health(self, deep=False):
+        self.budget_rollover()      # чтобы /health не показывал вчерашние 40/40
         h = {"ok": False, "tab": self.target_id, "page": self.page_url,
              "tab_age_s": int(time.time() - self.tab_created_at) if self.tab_created_at else None,
              "uptime_s": int(time.time() - self.started_at),
@@ -1003,12 +1004,35 @@ class ArenaEngine:
             h["error"] = str(e)[:300]
         return h
 
+    def budget_rollover(self) -> bool:
+        """Сменить сутки бюджета по UTC (04:00 → новые сутки = новые 40 обращений).
+
+        Вынесено отдельно от _budget_hit, потому что решения о бюджете принимаются
+        и БЕЗ запроса: пробник проверяет остаток заранее. Раньше в состоянии висело
+        «вчера 40/40», пробник из-за этого не запускался — а сброс суток происходил
+        только внутри запроса, которого как раз и не было (03.10.2026).
+        """
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if self.budget.get("day") != today:
+            log.info("бюджет: новые сутки %s (было %s/%s)", today,
+                     self.budget.get("used"), self.budget.get("day") or "—")
+            self.budget = {"day": today, "used": 0}
+            self._save_state(force=True)
+            return True
+        return False
+
+    def budget_left(self) -> int:
+        """Сколько обращений к арене осталось сегодня."""
+        self.budget_rollover()
+        if not self.cfg.DAILY_BUDGET:
+            return 10 ** 9
+        return max(0, int(self.cfg.DAILY_BUDGET) - int(self.budget.get("used") or 0))
+
     def _budget_hit(self):
         """Учесть реальное обращение к арене; при исчерпании бюджета — пауза до 04:00 UTC."""
         import calendar
-        today = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.budget.get("day") != today:
-            self.budget = {"day": today, "used": 0}
+        self.budget_rollover()
+        today = self.budget["day"]
         self.budget["used"] += 1
         lim = self.cfg.DAILY_BUDGET
         if lim > 0 and self.budget["used"] >= lim:

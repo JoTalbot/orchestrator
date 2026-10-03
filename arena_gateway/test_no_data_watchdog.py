@@ -131,12 +131,34 @@ async def case_cleanup_queue():
     assert eng3.pending_cleanup == ["eval-2"], eng3.pending_cleanup
 
 
+async def case_budget_rollover():
+    """Бюджет должен переезжать на новые UTC-сутки ДО запроса, иначе пробник
+    (он проверяет остаток заранее) блокируется навсегда на «вчера 40/40»."""
+    import time as _t
+    eng = ArenaEngine(C)
+    eng.budget = {"day": _t.strftime("%Y-%m-%d", _t.gmtime(_t.time() - 86400)), "used": 40}
+    left_before = eng.budget_left()
+    assert left_before == int(C.DAILY_BUDGET), "сутки не сменились: осталось %s" % left_before
+    assert eng.budget["day"] == _t.strftime("%Y-%m-%d", _t.gmtime()), eng.budget
+    print("6. бюджет переехал на новые сутки: было 40/40 → осталось %d" % left_before)
+
+    lim = C.DAILY_BUDGET
+    C.DAILY_BUDGET = 5
+    eng.cfg.DAILY_BUDGET = 5
+    eng.budget = {"day": _t.strftime("%Y-%m-%d", _t.gmtime()), "used": 3}
+    assert eng.budget_left() == 2, eng.budget_left()
+    print("7. остаток считается от лимита: 5 - 3 = %d" % eng.budget_left())
+    eng.cfg.DAILY_BUDGET = lim
+    C.DAILY_BUDGET = lim
+
+
 def main():
     import time as _t
     globals()["time"] = _t
     asyncio.run(case_no_data())
     asyncio.run(case_stream_ok())
     asyncio.run(case_cleanup_queue())
+    asyncio.run(case_budget_rollover())
     print("\nОК: вотчдог «нет данных» и очередь cleanup работают офлайн")
     return 0
 

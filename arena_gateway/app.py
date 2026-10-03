@@ -290,9 +290,14 @@ async def list_models(request: Request, all: bool = False, verified: bool = Fals
     else:
         items = registry.openai_models(only_selectable=True, only_verified=True)
         if not items:
-            items = registry.openai_models(only_selectable=True)[:limit]
+            items = registry.openai_models(only_selectable=True)
     if modality:
-        items = [m for m in items if modality in m["arena_modalities"]]
+        # Фильтр ДО обрезки по limit: раньше списком по 60 позиций дело и
+        # кончалось, и ?modality=image показывал 3 картинки вместо 41 —
+        # заодно смотрим возможности модели (caps_out), а не только ранги.
+        items = [d for d in items
+                 if (registry.by_id.get(d.get("arena_id")) is not None
+                     and registry.by_id[d["arena_id"]].supports(modality))]
 
     def key(d):
         m = registry.by_id.get(d["arena_id"])

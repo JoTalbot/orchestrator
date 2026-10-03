@@ -1,0 +1,10 @@
+[Unit]
+Description=Arena Gateway: гигиена раз в сутки (05:20 UTC, после пробника и валидатора)
+
+[Timer]
+OnCalendar=*-*-* 05:20:00 UTC
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
